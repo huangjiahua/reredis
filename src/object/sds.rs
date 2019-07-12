@@ -1,6 +1,14 @@
-type Sds = String;
+use crate::object::ObjectData;
 
-pub trait SdsString {
+pub type Sds = String;
+
+impl ObjectData for Sds {
+    fn sds_ref(&self) -> &str {
+        self
+    }
+}
+
+trait SdsString {
     fn sds_empty() -> Sds;
     fn sds_new_len(len: usize) -> Sds;
     fn sds_len(&self) -> usize;
@@ -85,11 +93,9 @@ impl SdsString for Sds {
     }
 
     fn sds_range(&mut self, start: usize, end: usize) {
-        let s = &self[start..end];
-        self.sds_cpy_from(&s.to_string());
+        let s = self[start..end].to_string();
+        self.sds_cpy_from(&s);
     }
-
-
 }
 
 #[cfg(test)]
@@ -100,6 +106,7 @@ mod test {
     fn create_empty_sds() {
         let s = Sds::sds_empty();
         assert_eq!(s, "");
+        assert_eq!(s.len(), 0);
     }
 
     #[test]
