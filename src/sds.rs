@@ -1,6 +1,6 @@
 type Sds = String;
 
-pub trait SdsAction {
+pub trait SdsString {
     fn sds_empty() -> Sds;
     fn sds_new_len(len: usize) -> Sds;
     fn sds_len(&self) -> usize;
@@ -18,7 +18,7 @@ pub trait SdsAction {
     fn sds_range(&mut self, start: usize, end: usize);
 }
 
-impl SdsAction for Sds {
+impl SdsString for Sds {
     fn sds_empty() -> Sds {
         Sds::from("")
     }
