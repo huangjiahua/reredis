@@ -29,6 +29,25 @@ struct DictEntry<K: Default + PartialEq, V: Default> {
     pub next: Option<Box<DictEntry<K, V>>>,
 }
 
+struct DictEntryIterator<'a, K: Default + PartialEq, V: Default> {
+    next: Option<&'a Box<DictEntry<K, V>>>,
+}
+
+impl<'a, K, V> Iterator for DictEntryIterator<'a, K, V>
+    where K: Default + PartialEq, V: Default
+{
+    type Item = &'a Box<DictEntry<K, V>>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let curr = self.next.take();
+        if let Some(e) = curr {
+            self.next = e.next.as_ref();
+            return Some(e);
+        }
+        None
+    }
+}
+
+
 struct DictTable<K: Default + PartialEq, V: Default> {
     pub table: Vec<Option<Box<DictEntry<K, V>>>>,
     pub size: usize,
@@ -47,13 +66,28 @@ impl<K, V> DictTable<K, V>
             used: 0,
         }
     }
+
+    fn iter(&self, index: usize) -> DictEntryIterator<K, V> {
+        DictEntryIterator { next: self.table[index].as_ref() }
+    }
+
+    fn insert_head(&mut self, idx: usize, mut entry: Box<DictEntry<K, V>>) {
+        match self.table[idx] {
+            None => self.table[idx] = Some(entry),
+            Some(_) => {
+                let curr_head = self.table[idx].take().unwrap();
+                entry.next = Some(curr_head);
+                self.table[idx] = Some(entry);
+            }
+        }
+    }
 }
 
 struct HashDict<K: Default + PartialEq, V: Default> {
     ht: [DictTable<K, V>; 2],
     rehash_idx: i32,
     iterators: i32,
-    f: fn(&K) -> usize,
+    hash: fn(&K) -> usize,
 }
 
 impl<K, V> HashDict<K, V>
@@ -66,28 +100,25 @@ impl<K, V> HashDict<K, V>
             ht: [table1, table2],
             rehash_idx: -1,
             iterators: 0,
-            f,
+            hash: f,
         }
     }
 
     pub fn find(&self, key: K) -> Option<&Box<DictEntry<K, V>>> {
-        let h;
-
         if self.ht[0].size == 0 {
             return None;
         }
 
-        h = self.f.borrow()(&key);
+        let h = self.hash_value(&key);
 
         for table in 0..2 {
             let idx = h & self.ht[table].size_mask;
 
-            let mut he = self.ht[table].table[idx].as_ref();
-            while let Some(e) = he {
-                if e.key == key {
-                    return Some(e);
-                }
-                he = e.next.as_ref();
+            if let Some(he) = self.ht[table]
+                .iter(idx)
+                .filter(|e| e.key == key)
+                .next() {
+                return Some(he);
             }
 
             if !self.is_rehashing() {
@@ -98,8 +129,6 @@ impl<K, V> HashDict<K, V>
     }
 
     pub fn find_by_mut(&mut self, key: K) -> Option<&Box<DictEntry<K, V>>> {
-        let h;
-
         if self.ht[0].size == 0 {
             return None;
         }
@@ -108,17 +137,16 @@ impl<K, V> HashDict<K, V>
             self.rehash_step()
         }
 
-        h = self.f.borrow()(&key);
+        let h = self.hash_value(&key);
 
         for table in 0..2 {
             let idx = h & self.ht[table].size_mask;
 
-            let mut he = self.ht[table].table[idx].as_ref();
-            while let Some(e) = he {
-                if e.key == key {
-                    return Some(e);
-                }
-                he = e.next.as_ref();
+            if let Some(he) = self.ht[table]
+                .iter(idx)
+                .filter(|e| e.key == key)
+                .next() {
+                return Some(he);
             }
 
             if !self.is_rehashing() {
@@ -172,15 +200,9 @@ impl<K, V> HashDict<K, V>
             value: Default::default(),
             next: None,
         };
+        let mut entry = Box::new(entry);
 
-        match ht.table[index] {
-            None => ht.table[index] = Some(Box::new(entry)),
-            Some(_) => {
-                let curr_head = ht.table[index].take().unwrap();
-                entry.next = Some(curr_head);
-                ht.table[index] = Some(Box::new(entry));
-            }
-        }
+        ht.insert_head(index, entry);
         ht.used += 1;
         ht.table[index].as_mut()
     }
@@ -211,26 +233,18 @@ impl<K, V> HashDict<K, V>
                 self.rehash_idx += 1;
             }
 
-            let index = self.rehash_idx as usize;
+            let idx = self.rehash_idx as usize;
 
-            while let Some(mut e) = self.ht[0].table[index].take() {
+            while let Some(mut e) = self.ht[0].table[idx].take() {
                 let next = e.next.take();
 
                 if let Some(de) = next {
-                    self.ht[0].table[index] = Some(de);
+                    self.ht[0].table[idx] = Some(de);
                 }
 
-                let h = self.f.borrow()(&e.key) & self.ht[1].size_mask;
+                let h = self.hash_value(&e.key) & self.ht[1].size_mask;
 
-                match self.ht[1].table[h] {
-                    None => self.ht[1].table[h] = Some(e),
-                    Some(_) => {
-                        let curr_head = self.ht[1].table[h].take().unwrap();
-                        e.next = Some(curr_head);
-                        self.ht[1].table[h] = Some(e);
-                    }
-                }
-
+                self.ht[1].insert_head(h, e);
                 self.ht[0].used -= 1;
                 self.ht[1].used += 1;
             }
@@ -245,17 +259,16 @@ impl<K, V> HashDict<K, V>
 
         self.expand_if_needed()?;
 
-        h = self.f.borrow()(key);
+        h = self.hash_value(key);
 
         for table in 0..2 {
             idx = h & self.ht[table].size_mask;
-            let mut he: Option<&Box<DictEntry<K, V>>> = self.ht[table].table[idx].as_ref();
 
-            while let Some(e) = he {
-                if e.key == *key {
-                    return Err(());
-                }
-                he = e.next.as_ref();
+            if let Some(he) = self.ht[table]
+                .iter(idx)
+                .filter(|e| e.key == *key)
+                .next() {
+                return Err(());
             }
 
             if !self.is_rehashing() {
@@ -314,6 +327,10 @@ impl<K, V> HashDict<K, V>
 
         Ok(())
     }
+
+    fn hash_value(&self, key: &K) -> usize {
+        self.hash.borrow()(key)
+    }
 }
 
 struct HashDictIterator<'a, K: Default + PartialEq, V: Default> {
@@ -335,7 +352,7 @@ mod test {
     #[test]
     fn create_a_hash_dict() {
         let hd: HashDict<usize, usize> = HashDict::new(int_hash_func);
-        let f = hd.f.borrow();
+        let f = hd.hash.borrow();
         assert_eq!(f(&1), 1);
         assert_eq!(hd.iterators, 0);
         assert_eq!(hd.rehash_idx, -1);
