@@ -97,7 +97,7 @@ impl<K, V> HashDict<K, V>
         None
     }
 
-    pub fn find_by_mut(&mut self, key: K, value: V) -> Option<&Box<DictEntry<K, V>>> {
+    pub fn find_by_mut(&mut self, key: K) -> Option<&Box<DictEntry<K, V>>> {
         let h;
 
         if self.ht[0].size == 0 {
@@ -190,7 +190,53 @@ impl<K, V> HashDict<K, V>
     }
 
     fn rehash_step(&mut self) {
-        // TODO: implement rehash_step
+        self.rehash(1);
+    }
+
+    fn rehash(&mut self, n: usize) -> bool {
+        if !self.is_rehashing() {
+            return false;
+        }
+
+        for i in 0..n {
+            if self.ht[0].used == 0 {
+                self.ht.swap(0, 1);
+                self.rehash_idx = -1;
+                return false;
+            }
+
+            assert!((self.rehash_idx as usize) < self.ht[0].size);
+
+            while let None = self.ht[0].table[self.rehash_idx as usize] {
+                self.rehash_idx += 1;
+            }
+
+            let index = self.rehash_idx as usize;
+
+            while let Some(mut e) = self.ht[0].table[index].take() {
+                let next = e.next.take();
+
+                if let Some(de) = next {
+                    self.ht[0].table[index] = Some(de);
+                }
+
+                let h = self.f.borrow()(&e.key) & self.ht[1].size_mask;
+
+                match self.ht[1].table[h] {
+                    None => self.ht[1].table[h] = Some(e),
+                    Some(_) => {
+                        let curr_head = self.ht[1].table[h].take().unwrap();
+                        e.next = Some(curr_head);
+                        self.ht[1].table[h] = Some(e);
+                    }
+                }
+
+                self.ht[0].used -= 1;
+                self.ht[1].used += 1;
+            }
+        }
+
+        true
     }
 
     fn key_index(&mut self, key: &K) -> Result<usize, ()> {
@@ -230,7 +276,7 @@ impl<K, V> HashDict<K, V>
         }
 
 
-        if self.ht[0].used > self.ht[0].size && dict_can_resize() {
+        if self.ht[0].used >= self.ht[0].size && dict_can_resize() {
             return self.expand(self.ht[0].used * 2);
         }
 
@@ -330,11 +376,46 @@ mod test {
     #[test]
     fn ht_should_resize() {
         let mut hd: HashDict<usize, usize> = HashDict::new(int_hash_func);
-        for i in 0..5 {
+        // insert 4 to 4
+        for i in 0..4 {
             hd.add(i, i + 1).unwrap();
             assert!(!hd.is_rehashing());
         }
-        hd.add(7, 8);
+        // insert 1 to 5; find 4 >= 4 and do rehashing
+        hd.add(7, 8).unwrap();
+        assert!(hd.is_rehashing());
+
+        // do rehash for 4 times and there is 0 in the ht[0]
+        for i in 0..4 {
+            hd.find_by_mut(3);
+            assert!(hd.is_rehashing());
+        }
+        // ht[0] now has 5
+        hd.find_by_mut(3);
+        assert!(!hd.is_rehashing());
+
+        // insert 3 to 8
+        for i in 0..3 {
+            hd.add(50 + i, i + 1).unwrap();
+            assert!(!hd.is_rehashing());
+        }
+        // insert 1 to 9; find 8 >= 8 and do rehashing
+        hd.add(101, 102).unwrap();
+        assert!(hd.is_rehashing());
+
+        // do rehash for 1 time and there is still 7 in the ht[0]
+        hd.find_by_mut(3);
+
+        for i in 0..5 {
+            hd.add(150 + i, i + 1).unwrap();
+            assert!(hd.is_rehashing());
+        }
+        hd.add(175, 101).unwrap();
+        assert!(!hd.is_rehashing());
+
+        hd.add(176, 101).unwrap();
+        assert!(!hd.is_rehashing());
+        hd.add(177, 101).unwrap();
         assert!(hd.is_rehashing());
     }
 
