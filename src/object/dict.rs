@@ -117,19 +117,19 @@ impl<K, V> HashDict<K, V>
         }
     }
 
-    pub fn find(&self, key: K) -> Option<&Box<DictEntry<K, V>>> {
+    pub fn find(&self, key: &K) -> Option<&Box<DictEntry<K, V>>> {
         if self.ht[0].size == 0 {
             return None;
         }
 
-        let h = self.hash_value(&key);
+        let h = self.hash_value(key);
 
         for table in 0..2 {
             let idx = h & self.ht[table].size_mask;
 
             if let Some(he) = self.ht[table]
                 .iter(idx)
-                .filter(|e| e.key == key)
+                .filter(|e| e.key == *key)
                 .next() {
                 return Some(he);
             }
@@ -144,7 +144,7 @@ impl<K, V> HashDict<K, V>
         None
     }
 
-    pub fn find_by_mut(&mut self, key: K) -> Option<&Box<DictEntry<K, V>>> {
+    pub fn find_by_mut(&mut self, key: &K) -> Option<&Box<DictEntry<K, V>>> {
         if self.ht[0].size == 0 {
             return None;
         }
@@ -157,7 +157,7 @@ impl<K, V> HashDict<K, V>
 
             if let Some(he) = self.ht[table]
                 .iter(idx)
-                .filter(|e| e.key == key)
+                .filter(|e| e.key == *key)
                 .next() {
                 return Some(he);
             }
@@ -170,6 +170,50 @@ impl<K, V> HashDict<K, V>
         }
         // not found in both ht[0] and ht[1]
         None
+    }
+
+    pub fn fetch_value(&mut self, key: &K) -> Option<&V> {
+        if let Some(e) = self.find(key) {
+            return Some(&e.value);
+        }
+        None
+    }
+
+    pub fn fetch_value_by_mut(&mut self, key: &K) -> Option<&V> {
+        if let Some(e) = self.find_by_mut(key) {
+            return Some(&e.value);
+        }
+        None
+    }
+
+    pub fn iter(&self) -> HashDictIterator<K, V> {
+        let mut table = 0usize;
+        let mut index = 0usize;
+        let mut break_outer = false;
+
+        for t in 0..2 {
+            for (i, v) in self.ht[t].table
+                .iter()
+                .enumerate() {
+                if v.is_some() {
+                    table = t;
+                    index = i;
+                    break_outer = true;
+                    break;
+                }
+            }
+            if break_outer || !self.is_rehashing() {
+                break;
+            }
+        }
+
+        HashDictIterator {
+            d: self,
+            table,
+            index,
+            save: false,
+            entry: self.ht[table].table[index].as_ref(),
+        }
     }
 
     pub fn add(&mut self, key: K, value: V) -> Result<(), ()> {
@@ -209,6 +253,7 @@ impl<K, V> HashDict<K, V>
         let idx = idx & ht.size_mask;
 
         ht.insert_head(idx, entry);
+        ht.used += 1;
         true
     }
 
@@ -218,6 +263,14 @@ impl<K, V> HashDict<K, V>
 
     pub fn disable_resize(&mut self) {
         self.dict_can_resize = false;
+    }
+
+    pub fn set_hash_function_seed(&mut self, seed: u64) {
+        self.hash_seed = seed;
+    }
+
+    pub fn get_hash_function_seed(&self) -> u64 {
+        self.hash_seed
     }
 
     fn set_val(entry: &mut Box<DictEntry<K, V>>, value: V) {
@@ -412,10 +465,65 @@ impl<K, V> HashDict<K, V>
 
 struct HashDictIterator<'a, K: Default + PartialEq, V: Default> {
     d: &'a HashDict<K, V>,
-    table: i32,
-    index: i32,
+    table: usize,
+    index: usize,
     save: bool,
-    entry: &'a Option<Box<DictEntry<K, V>>>,
+    entry: Option<&'a Box<DictEntry<K, V>>>,
+}
+
+impl<'a, K, V> Iterator for HashDictIterator<'a, K, V>
+    where K: Default + PartialEq, V: Default {
+    type Item = &'a Box<DictEntry<K, V>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let en = self.entry.take();
+        let mut ret = None;
+
+        match en {
+            None => return None,
+            Some(e) => {
+                self.entry = e.next.as_ref();
+                // the next is set, don't need to worry
+                // about it
+                if self.entry.is_some() {
+                    return Some(e);
+                }
+                ret = Some(e);
+            }
+        }
+
+        self.index += 1;
+
+        while self.table < 2 {
+            // let's find a valid entry in ht[0]
+            if self.index < self.d.ht[self.table].size {
+                while let None = self.d.ht[self.table].table[self.index] {
+                    self.index += 1;
+                    if self.index >= self.d.ht[self.table].size {
+                        break;
+                    }
+                }
+            }
+
+            if self.index < self.d.ht[self.table].size {
+                // found
+                self.entry = self.d.ht[self.table].table[self.index]
+                    .as_ref();
+                return Some(ret.unwrap());
+            }
+
+            // the ht[1] is empty, no need to go there
+            if !self.d.is_rehashing() {
+                break;
+            }
+
+            // let's go to the ht[1]
+            self.table += 1;
+            self.index = 0;
+        }
+
+        Some(ret.unwrap())
+    }
 }
 
 #[cfg(test)]
@@ -453,16 +561,16 @@ mod test {
         hd.add(4, 5).unwrap();
         hd.add(5, 6).unwrap();
         hd.add(8, 9).unwrap();
-        let entry = hd.find(3).unwrap();
+        let entry = hd.find(&3).unwrap();
         assert_eq!(entry.value, 4);
-        let entry = hd.find(4).unwrap();
+        let entry = hd.find(&4).unwrap();
         assert_eq!(entry.value, 5);
-        let entry = hd.find(5).unwrap();
+        let entry = hd.find(&5).unwrap();
         assert_eq!(entry.value, 6);
-        let entry = hd.find(8).unwrap();
+        let entry = hd.find(&8).unwrap();
         assert_eq!(entry.value, 9);
 
-        let entry = hd.find(2);
+        let entry = hd.find(&2);
         if let Some(_) = entry {
             panic!("Wrong");
         }
@@ -482,11 +590,11 @@ mod test {
 
         // do rehash for 4 times and there is 0 in the ht[0]
         for i in 0..4 {
-            hd.find_by_mut(3);
+            hd.find_by_mut(&3);
             assert!(hd.is_rehashing());
         }
         // ht[0] now has 5
-        hd.find_by_mut(3);
+        hd.find_by_mut(&3);
         assert!(!hd.is_rehashing());
 
         // insert 3 to 8
@@ -499,7 +607,7 @@ mod test {
         assert!(hd.is_rehashing());
 
         // do rehash for 1 time and there is still 7 in the ht[0]
-        hd.find_by_mut(3);
+        hd.find_by_mut(&3);
 
         for i in 0..5 {
             hd.add(150 + i, i + 1).unwrap();
@@ -522,13 +630,51 @@ mod test {
         }
 
         for i in 0..5 {
-            let r = hd.find(i).unwrap();
+            let r = hd.find(&i).unwrap();
             assert_eq!(r.value, i + 1);
         }
 
         let a = 1;
         let b = 2;
         hd.replace(a, b);
+    }
+
+    #[test]
+    fn simple_iterator_test() {
+        let mut hd: HashDict<usize, usize> = HashDict::new(int_hash_func, 0);
+        for i in 0..4 {
+            hd.add(i, i).unwrap();
+        }
+
+        let mut cnt = 0;
+
+        for en in hd.iter() {
+            assert_eq!(en.key, en.value);
+            cnt += 1;
+        }
+
+        assert_eq!(cnt, 4);
+    }
+
+    #[test]
+    fn iterator_test_when_rehashing() {
+        let mut hd: HashDict<usize, usize> = HashDict::new(int_hash_func, 0);
+        let mut cnt = 0;
+
+        for i in 0..100 {
+            hd.add(i, i).unwrap();
+            cnt += 1;
+            if hd.is_rehashing() {
+                break;
+            }
+        }
+
+        for en in hd.iter() {
+            assert_eq!(en.key, en.value);
+            cnt -= 1;
+        }
+
+        assert_eq!(cnt, 0);
     }
 
     #[test]
