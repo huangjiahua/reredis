@@ -1,7 +1,7 @@
 [package]
 name = "reredis"
 version = "0.1.0"
-authors = ["huangjiahua <hjh4477@outlook.com>"]
+authors = ["huangjiahua <jiahua.h at outlook dot com>"]
 edition = "2018"
 
 [dependencies]
