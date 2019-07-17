@@ -11,7 +11,7 @@ use std::error::Error;
 use crate::object::list::List;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
-enum RobjType {
+pub enum RobjType {
     String,
     List,
     Set,
@@ -20,7 +20,7 @@ enum RobjType {
 }
 
 #[derive(Copy, Clone)]
-enum RobjEncoding {
+pub enum RobjEncoding {
     Raw,
     Int,
     Ht,
@@ -32,7 +32,7 @@ enum RobjEncoding {
     EmbStr,
 }
 
-trait ObjectData {
+pub trait ObjectData {
     fn sds_ref(&self) -> &str {
         panic!("This is not an Sds string");
     }
@@ -44,42 +44,42 @@ trait ObjectData {
 type Pointer = Box<dyn ObjectData>;
 pub type RobjPtr = Rc<RefCell<Robj>>;
 
-struct Robj {
-    pub obj_type: RobjType,
-    pub encoding: RobjEncoding,
-    pub lru: SystemTime,
-    pub ptr: Pointer,
+pub struct Robj {
+    obj_type: RobjType,
+    encoding: RobjEncoding,
+    lru: SystemTime,
+    ptr: Pointer,
 }
 
 impl Robj {
-    fn string(&self) -> &str {
+    pub fn string(&self) -> &str {
         self.ptr.sds_ref()
     }
 
-    fn dup_string_object(&self) -> RobjPtr {
+    pub fn dup_string_object(&self) -> RobjPtr {
         let string = self.string();
         Self::create_string_object(string)
     }
 
-    fn object_to_long(&self) -> Result<i64, Box<dyn Error>> {
+    pub fn object_to_long(&self) -> Result<i64, Box<dyn Error>> {
         let string = self.string();
         let i: i64 = string.parse()?;
         Ok(i)
     }
 
-    fn try_object_encoding(&self) -> RobjPtr {
+    pub fn try_object_encoding(&self) -> RobjPtr {
         unimplemented!()
     }
 
-    fn get_decoded_object(&self) -> Rc<RefCell<Robj>> {
+    pub fn get_decoded_object(&self) -> Rc<RefCell<Robj>> {
         unimplemented!()
     }
 
-    fn string_object_len(&self) -> usize {
+    pub fn string_object_len(&self) -> usize {
         self.string().len()
     }
 
-    fn create_object(obj_type: RobjType, ptr: Pointer) -> RobjPtr {
+    pub fn create_object(obj_type: RobjType, ptr: Pointer) -> RobjPtr {
         Rc::new(RefCell::new(
             Robj {
                 obj_type,
@@ -90,28 +90,28 @@ impl Robj {
         ))
     }
 
-    fn create_string_object(string: &str) -> RobjPtr {
+    pub fn create_string_object(string: &str) -> RobjPtr {
         Self::create_object(RobjType::String, Box::new(string.to_string()))
     }
 
-    fn create_raw_string_object(string: &str) -> RobjPtr {
+    pub fn create_raw_string_object(string: &str) -> RobjPtr {
         let ret = Self::create_string_object(string);
         ret.borrow_mut().encoding = RobjEncoding::Raw;
         ret
     }
 
-    fn create_embedded_string_object(string: &str) -> RobjPtr {
+    pub fn create_embedded_string_object(string: &str) -> RobjPtr {
         let ret = Self::create_string_object(string);
         ret.borrow_mut().encoding = RobjEncoding::EmbStr;
         ret
     }
 
-    fn create_string_object_from_long(value: i64) -> Rc<RefCell<Robj>> {
+    pub fn create_string_object_from_long(value: i64) -> Rc<RefCell<Robj>> {
         let ptr = Box::new(value.to_string());
         Self::create_object(RobjType::String, ptr)
     }
 
-    fn create_string_object_from_double(value: f64) -> Rc<RefCell<Robj>> {
+    pub fn create_string_object_from_double(value: f64) -> Rc<RefCell<Robj>> {
         let ptr = Box::new(value.to_string());
         Self::create_object(RobjType::String, ptr)
     }
