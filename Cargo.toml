@@ -5,3 +5,4 @@ authors = ["huangjiahua <jiahua.h at outlook dot com>"]
 edition = "2018"
 
 [dependencies]
+murmurhash64 = "0.3.1"
