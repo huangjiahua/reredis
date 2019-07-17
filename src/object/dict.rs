@@ -1,12 +1,9 @@
 use std::collections::HashMap;
 use crate::object::RobjPtr;
 use core::borrow::Borrow;
+use std::ops::Deref;
 
 const DICT_HT_INITIAL_SIZE: usize = 4;
-
-fn dict_can_resize() -> bool {
-    true
-}
 
 fn next_power(size: usize) -> usize {
     let mut i = DICT_HT_INITIAL_SIZE;
@@ -27,6 +24,18 @@ struct DictEntry<K: Default + PartialEq, V: Default> {
     pub key: K,
     pub value: V,
     pub next: Option<Box<DictEntry<K, V>>>,
+}
+
+impl<K, V> DictEntry<K, V>
+    where K: Default + PartialEq, V: Default
+{
+    fn new(key: K, value: V) -> Self {
+        DictEntry {
+            key,
+            value,
+            next: None,
+        }
+    }
 }
 
 struct DictEntryIterator<'a, K: Default + PartialEq, V: Default> {
@@ -87,19 +96,23 @@ struct HashDict<K: Default + PartialEq, V: Default> {
     ht: [DictTable<K, V>; 2],
     rehash_idx: i32,
     iterators: i32,
-    hash: fn(&K) -> usize,
+    dict_can_resize: bool,
+    hash_seed: u64,
+    hash: fn(&K, u64) -> usize,
 }
 
 impl<K, V> HashDict<K, V>
     where K: Default + PartialEq, V: Default
 {
-    pub fn new(f: fn(&K) -> usize) -> HashDict<K, V> {
+    pub fn new(f: fn(&K, u64) -> usize, hash_seed: u64) -> HashDict<K, V> {
         let table1: DictTable<K, V> = DictTable::new();
         let table2: DictTable<K, V> = DictTable::new();
         HashDict {
             ht: [table1, table2],
             rehash_idx: -1,
             iterators: 0,
+            dict_can_resize: true,
+            hash_seed,
             hash: f,
         }
     }
@@ -121,10 +134,13 @@ impl<K, V> HashDict<K, V>
                 return Some(he);
             }
 
+            // if the dict is not rehashing, the ht[1]
+            // must be empty, there is no need to go there
             if !self.is_rehashing() {
                 return None;
             }
         }
+        // not found in both ht[0] and ht[1]
         None
     }
 
@@ -133,11 +149,8 @@ impl<K, V> HashDict<K, V>
             return None;
         }
 
-        if self.is_rehashing() {
-            self.rehash_step()
-        }
-
         let h = self.hash_value(&key);
+        self.rehash_step_if_needed();
 
         for table in 0..2 {
             let idx = h & self.ht[table].size_mask;
@@ -149,10 +162,13 @@ impl<K, V> HashDict<K, V>
                 return Some(he);
             }
 
+            // if the dict is not rehashing, the ht[1]
+            // must be empty, there is no need to go there
             if !self.is_rehashing() {
                 return None;
             }
         }
+        // not found in both ht[0] and ht[1]
         None
     }
 
@@ -168,6 +184,42 @@ impl<K, V> HashDict<K, V>
         }
     }
 
+    pub fn replace(&mut self, mut key: K, mut value: V) -> bool {
+        self.rehash_step_if_needed();
+        self.expand_if_needed();
+
+        let idx = self.hash_value(&key);
+        let mut entry: DictEntry<K, V>;
+        let ht: &mut DictTable<K, V>;
+
+        match self.try_update(key, value) {
+            None => return false,
+            Some((k, v)) => {
+                key = k;
+                value = v;
+            }
+        }
+
+        self.rehash_step_if_needed();
+
+        entry = DictEntry::new(key, value);
+        let mut entry = Box::new(entry);
+
+        ht = self.get_working_ht();
+        let idx = idx & ht.size_mask;
+
+        ht.insert_head(idx, entry);
+        true
+    }
+
+    pub fn enable_resize(&mut self) {
+        self.dict_can_resize = true;
+    }
+
+    pub fn disable_resize(&mut self) {
+        self.dict_can_resize = false;
+    }
+
     fn set_val(entry: &mut Box<DictEntry<K, V>>, value: V) {
         entry.value = value;
     }
@@ -181,25 +233,16 @@ impl<K, V> HashDict<K, V>
         let mut entry: DictEntry<K, V>;
         let ht: &mut DictTable<K, V>;
 
-        if self.is_rehashing() {
-            self.rehash_step();
-        }
+        self.rehash_step_if_needed();
 
         match self.key_index(&key) {
             Err(_) => return None,
             Ok(i) => index = i,
         }
 
-        ht = match self.is_rehashing() {
-            true => &mut self.ht[1],
-            false => &mut self.ht[0],
-        };
+        ht = self.get_working_ht();
 
-        entry = DictEntry {
-            key,
-            value: Default::default(),
-            next: None,
-        };
+        entry = DictEntry::new(key, Default::default());
         let mut entry = Box::new(entry);
 
         ht.insert_head(index, entry);
@@ -221,6 +264,8 @@ impl<K, V> HashDict<K, V>
         }
 
         for i in 0..n {
+            let idx: usize;
+
             if self.ht[0].used == 0 {
                 self.ht.swap(0, 1);
                 self.rehash_idx = -1;
@@ -233,16 +278,17 @@ impl<K, V> HashDict<K, V>
                 self.rehash_idx += 1;
             }
 
-            let idx = self.rehash_idx as usize;
+            idx = self.rehash_idx as usize;
 
             while let Some(mut e) = self.ht[0].table[idx].take() {
+                let h: usize;
                 let next = e.next.take();
 
                 if let Some(de) = next {
                     self.ht[0].table[idx] = Some(de);
                 }
 
-                let h = self.hash_value(&e.key) & self.ht[1].size_mask;
+                h = self.hash_value(&e.key) & self.ht[1].size_mask;
 
                 self.ht[1].insert_head(h, e);
                 self.ht[0].used -= 1;
@@ -283,35 +329,33 @@ impl<K, V> HashDict<K, V>
             return Ok(());
         }
 
-
         if self.ht[0].size == 0 {
             return self.expand(DICT_HT_INITIAL_SIZE);
         }
 
-
-        if self.ht[0].used >= self.ht[0].size && dict_can_resize() {
+        if self.ht[0].used >= self.ht[0].size && self.dict_can_resize {
             return self.expand(self.ht[0].used * 2);
         }
-
 
         Ok(())
     }
 
     fn expand(&mut self, size: usize) -> Result<(), ()> {
         let real_size = next_power(size);
+        let table: usize;
+        let mut new_table: Vec<Option<Box<DictEntry<K, V>>>>;
 
         if self.is_rehashing() || self.ht[0].size >= size {
             return Err(());
         }
 
-        let mut new_table: Vec<Option<Box<DictEntry<K, V>>>>
-            = Vec::with_capacity(real_size);
+        new_table = Vec::with_capacity(real_size);
 
         for _ in 0..real_size {
             new_table.push(None);
         }
 
-        let table = if self.ht[0].size == 0 {
+        table = if self.ht[0].size == 0 {
             0
         } else {
             1
@@ -329,7 +373,40 @@ impl<K, V> HashDict<K, V>
     }
 
     fn hash_value(&self, key: &K) -> usize {
-        self.hash.borrow()(key)
+        self.hash.borrow()(key, self.hash_seed)
+    }
+
+    fn rehash_step_if_needed(&mut self) {
+        if self.is_rehashing() {
+            self.rehash_step();
+        }
+    }
+
+    fn get_working_ht(&mut self) -> &mut DictTable<K, V> {
+        if self.is_rehashing() {
+            &mut self.ht[1]
+        } else {
+            &mut self.ht[0]
+        }
+    }
+
+    fn try_update(&mut self, key: K, value: V) -> Option<(K, V)> {
+        let idx = self.hash_value(&key);
+        for table in 0..2 {
+            let idx = idx & self.ht[table].size_mask;
+            let mut he = self.ht[table].table[idx].as_mut();
+            while let Some(e) = he {
+                if e.key == key {
+                    return None;
+                }
+                he = e.next.as_mut();
+            }
+
+            if !self.is_rehashing() {
+                break;
+            }
+        }
+        Some((key, value))
     }
 }
 
@@ -345,22 +422,23 @@ struct HashDictIterator<'a, K: Default + PartialEq, V: Default> {
 mod test {
     use super::*;
 
-    fn int_hash_func(i: &usize) -> usize {
+    fn int_hash_func(i: &usize, seed: u64) -> usize {
         i.clone()
     }
 
+
     #[test]
     fn create_a_hash_dict() {
-        let hd: HashDict<usize, usize> = HashDict::new(int_hash_func);
+        let hd: HashDict<usize, usize> = HashDict::new(int_hash_func, 0);
         let f = hd.hash.borrow();
-        assert_eq!(f(&1), 1);
+        assert_eq!(f(&1, 0), 1);
         assert_eq!(hd.iterators, 0);
         assert_eq!(hd.rehash_idx, -1);
     }
 
     #[test]
     fn add_some_value() {
-        let mut hd: HashDict<usize, usize> = HashDict::new(int_hash_func);
+        let mut hd: HashDict<usize, usize> = HashDict::new(int_hash_func, 0);
         hd.add(3, 1).unwrap();
         let r = hd.add(3, 1);
         if let Ok(_) = r {
@@ -370,11 +448,11 @@ mod test {
 
     #[test]
     fn simple_add_and_find() {
-        let mut hd: HashDict<usize, usize> = HashDict::new(int_hash_func);
-        hd.add(3, 4);
-        hd.add(4, 5);
-        hd.add(5, 6);
-        hd.add(8, 9);
+        let mut hd: HashDict<usize, usize> = HashDict::new(int_hash_func, 0);
+        hd.add(3, 4).unwrap();
+        hd.add(4, 5).unwrap();
+        hd.add(5, 6).unwrap();
+        hd.add(8, 9).unwrap();
         let entry = hd.find(3).unwrap();
         assert_eq!(entry.value, 4);
         let entry = hd.find(4).unwrap();
@@ -392,7 +470,7 @@ mod test {
 
     #[test]
     fn ht_should_resize() {
-        let mut hd: HashDict<usize, usize> = HashDict::new(int_hash_func);
+        let mut hd: HashDict<usize, usize> = HashDict::new(int_hash_func, 0);
         // insert 4 to 4
         for i in 0..4 {
             hd.add(i, i + 1).unwrap();
@@ -434,6 +512,23 @@ mod test {
         assert!(!hd.is_rehashing());
         hd.add(177, 101).unwrap();
         assert!(hd.is_rehashing());
+    }
+
+    #[test]
+    fn simple_replace() {
+        let mut hd: HashDict<usize, usize> = HashDict::new(int_hash_func, 0);
+        for i in 0..5 {
+            assert!(hd.replace(i, i + 1));
+        }
+
+        for i in 0..5 {
+            let r = hd.find(i).unwrap();
+            assert_eq!(r.value, i + 1);
+        }
+
+        let a = 1;
+        let b = 2;
+        hd.replace(a, b);
     }
 
     #[test]
