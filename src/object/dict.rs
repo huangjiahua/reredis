@@ -230,7 +230,7 @@ impl<K, V> HashDict<K, V>
 
     pub fn replace(&mut self, mut key: K, mut value: V) -> bool {
         self.rehash_step_if_needed();
-        self.expand_if_needed();
+        self.expand_if_needed().unwrap();
 
         let idx = self.hash_value(&key);
         let mut entry: DictEntry<K, V>;
