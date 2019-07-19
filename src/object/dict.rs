@@ -363,7 +363,7 @@ impl<K, V> HashDict<K, V>
         for table in 0..2 {
             idx = h & self.ht[table].size_mask;
 
-            if let Some(he) = self.ht[table]
+            if let Some(_) = self.ht[table]
                 .iter(idx)
                 .filter(|e| e.key == *key)
                 .next() {
