@@ -1,13 +1,14 @@
 use std::rc::Rc;
-use crate::object::RobjPtr;
-use std::alloc::handle_alloc_error;
+use crate::object::{RobjPtr, Robj, RobjType, Sds};
 use rand::prelude::*;
 use std::iter::Skip;
+use core::borrow::Borrow;
+use std::cell::{Ref, RefCell};
 
 const SKIP_LIST_MAX_LEVEL: usize = 32;
 
 pub struct SkipListLevel {
-    forward: Option<Rc<SkipListNode>>,
+    forward: Option<Rc<RefCell<SkipListNode>>>,
     span: usize,
 }
 
@@ -43,11 +44,15 @@ impl SkipListNode {
 
         node
     }
+
+    fn obj_ref(&self) -> &RobjPtr {
+        self.obj.as_ref().unwrap()
+    }
 }
 
 pub struct SkipList {
-    header: Rc<SkipListNode>,
-    tail: Option<Rc<SkipListNode>>,
+    header: Rc<RefCell<SkipListNode>>,
+    tail: Option<Rc<RefCell<SkipListNode>>>,
     length: usize,
     level: usize,
 }
@@ -60,7 +65,7 @@ impl SkipList {
         header.backward = None;
 
         SkipList {
-            header: Rc::new(header),
+            header: Rc::new(RefCell::new(header)),
             tail: None,
             length: 0,
             level: 1,
@@ -84,18 +89,36 @@ impl SkipList {
     }
 
     fn insert(&mut self, score: f64, obj: RobjPtr) {
-        let mut update: Vec<Option<&mut Rc<SkipListNode>>> =
+        let mut update: Vec<Option<Rc<RefCell<SkipListNode>>>> =
             Vec::with_capacity(SKIP_LIST_MAX_LEVEL);
+
+        for i in 0..SKIP_LIST_MAX_LEVEL {
+            update.push(None)
+        }
 
         let mut rank = [0usize; SKIP_LIST_MAX_LEVEL];
 
-        let mut x = Some(&self.header);
+        let mut x: Option<Rc<RefCell<SkipListNode>>> = Some(Rc::clone(&self.header));
+
         for i in (0..self.level).rev() {
             rank[i] = if i == self.level - 1 {
                 0
             } else {
                 rank[i + 1]
             };
+
+            let mut x_ref = x.as_ref();
+            let mut node_ref = x_ref.unwrap().as_ref().borrow();
+            let mut forward = node_ref.level[i].forward.as_ref();
+
+            while forward.is_some() &&
+                (forward.unwrap().as_ref().borrow().score < score ||
+                    (forward.unwrap().as_ref().borrow().score == score &&
+                        forward.unwrap().as_ref().borrow().obj.as_ref()
+                            .unwrap().as_ref().borrow().string()
+                            < obj.as_ref().borrow().string())) {
+                rank[i] += x.as_ref().unwrap().as_ref().borrow().level[i].span;
+            }
         }
     }
 }
