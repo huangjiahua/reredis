@@ -1,10 +1,11 @@
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use crate::object::{RobjPtr, Robj, RobjType, Sds};
 use rand::prelude::*;
 use std::iter::Skip;
 use core::borrow::{Borrow, BorrowMut};
 use std::cell::{Ref, RefCell};
 use std::ops::Range;
+use std::iter::Iterator;
 
 const SKIP_LIST_MAX_LEVEL: usize = 32;
 
@@ -16,7 +17,7 @@ pub struct SkipListLevel {
 pub struct SkipListNode {
     obj: Option<RobjPtr>,
     score: f64,
-    backward: Option<Rc<RefCell<SkipListNode>>>,
+    backward: Option<Weak<RefCell<SkipListNode>>>,
     level: Vec<SkipListLevel>,
 }
 
@@ -48,6 +49,51 @@ impl SkipListNode {
 
     fn obj_ref(&self) -> &RobjPtr {
         self.obj.as_ref().unwrap()
+    }
+
+    fn iter(&self, level: usize) -> SkipListNextNodeIter {
+        let forward = self.level[level].forward.as_ref();
+
+        let mut i = SkipListNextNodeIter {
+            next: None,
+            level,
+        };
+
+        if let Some(n) = forward {
+            i.next = Some(Rc::clone(n));
+        }
+
+        i
+    }
+}
+
+pub struct SkipListNextNodeIter {
+    next: Option<Rc<RefCell<SkipListNode>>>,
+    level: usize,
+}
+
+impl Iterator for SkipListNextNodeIter {
+    type Item = Rc<RefCell<SkipListNode>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let None = self.next {
+            return None;
+        }
+        let ret = Rc::clone(&self.next.as_ref().unwrap());
+        let this_node = ret
+            .as_ref()
+            .borrow();
+        let forward = this_node
+            .level[self.level]
+            .forward
+            .as_ref();
+
+        match forward {
+            None => self.next = None,
+            Some(_) => self.next = Some(Rc::clone(forward.unwrap())),
+        }
+
+        Some(Rc::clone(&ret))
     }
 }
 
@@ -108,27 +154,17 @@ impl SkipList {
                 rank[i + 1]
             };
 
-
-            loop {
-                let curr = Rc::clone(&x);
-                let this_node = curr.as_ref().borrow();
-                if this_node.level[i].forward.is_none() {
+            let mut span = x.as_ref().borrow().level[i].span;
+            for node in x.clone().as_ref().borrow().iter(i) {
+                let inner = node.as_ref().borrow();
+                let inner_obj = inner.obj_ref().as_ref().borrow();
+                if inner.score > score || (inner.score == score &&
+                    inner_obj.string() >= obj.as_ref().borrow().string()) {
                     break;
                 }
-                let forward = this_node.level[i]
-                    .forward.as_ref().unwrap();
-                let next_node = forward.as_ref().borrow();
-                let next_score = next_node.score.clone();
-                let next_obj = next_node.obj.as_ref().unwrap().as_ref().borrow();
-
-                if next_score > score || (next_score == score &&
-                    next_obj.string() >= obj.as_ref().borrow().string()) {
-                    break;
-                }
-
-                rank[i] += this_node.level[i].span;
-
-                x = Rc::clone(forward);
+                rank[i] += span;
+                span = node.as_ref().borrow().level[i].span;
+                x = Rc::clone(&node);
             }
 
             update[i] = Some(Rc::clone(&x));
@@ -180,11 +216,11 @@ impl SkipList {
         ) {
             None
         } else {
-            Some(Rc::clone(update[0].as_ref().unwrap()))
+            Some(Rc::downgrade(update[0].as_ref().unwrap()))
         };
 
         if let Some(e) = curr.borrow().level[0].forward.as_ref() {
-            e.as_ref().borrow_mut().backward = Some(Rc::clone(&new_node));
+            e.as_ref().borrow_mut().backward = Some(Rc::downgrade(&new_node));
         } else {
             self.tail = Some(Rc::clone(&new_node));
         }
@@ -200,19 +236,12 @@ impl SkipList {
         let mut x = Rc::clone(&self.header);
 
         for i in (0..self.level).rev() {
-            loop {
-                let curr = Rc::clone(&x);
-                let this_node = curr.as_ref().borrow();
-                let forward = this_node.level[i].forward.as_ref();
-                if forward.is_none() {
+            for node in x.clone().as_ref().borrow().iter(i) {
+                let score = node.as_ref().borrow().score;
+                if RangeSpec::value_gte_min(score, &range) {
                     break;
                 }
-                let forward = forward.unwrap();
-                let next_node = forward.as_ref().borrow();
-                if RangeSpec::value_gte_min(next_node.score, &range) {
-                    break;
-                }
-                x = Rc::clone(forward);
+                x = Rc::clone(&node);
             }
         }
 
@@ -227,6 +256,31 @@ impl SkipList {
 
         let score = x.as_ref().borrow().score;
         if !RangeSpec::value_lte_max(score, &range) {
+            return None;
+        }
+
+        Some(x)
+    }
+
+    pub fn last_in_range(&self, range: &RangeSpec) -> Option<Rc<RefCell<SkipListNode>>> {
+        if !self.is_in_range(&range) {
+            return None;
+        }
+
+        let mut x = Rc::clone(&self.header);
+
+        for i in (0..self.level).rev() {
+            for node in x.clone().as_ref().borrow().iter(i) {
+                let score = node.as_ref().borrow().score;
+                if !RangeSpec::value_lte_max(score, &range) {
+                    break;
+                }
+                x = Rc::clone(&node);
+            }
+        }
+
+        let score = x.as_ref().borrow().score;
+        if !RangeSpec::value_gte_min(score, &range) {
             return None;
         }
 
@@ -386,9 +440,30 @@ mod test {
         list.insert(3.2, o1);
         list.insert(2.1, Robj::create_string_object("haha"));
 
-        let node = list.first_in_range(&RangeSpec::new_closed(1.0, 2.2))
-            .unwrap();
+        let node =
+            list.first_in_range(&RangeSpec::new_closed(1.0, 2.2))
+                .unwrap();
         assert_eq!(node.as_ref().borrow().score, 2.1);
+    }
+
+    #[test]
+    fn get_last_in_range() {
+        let mut list = SkipList::new();
+        let o1 = Robj::create_string_object("foo");
+        let o2 = Robj::create_string_object("bar");
+
+        list.insert(0.2, o2);
+        list.insert(3.2, o1);
+        list.insert(2.1, Robj::create_string_object("haha"));
+
+        let node =
+            list.last_in_range(&RangeSpec::new_closed(1.0, 2.2))
+                .unwrap();
+        assert_eq!(node.as_ref().borrow().score, 2.1);
+
+        let node =
+            list.last_in_range(&RangeSpec::new_open(0.0, 0.2));
+        assert!(node.is_none());
     }
 }
 
