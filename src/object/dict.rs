@@ -186,6 +186,8 @@ impl<K, V> HashDict<K, V>
         None
     }
 
+    // TODO: delete
+
     pub fn iter(&self) -> HashDictIterator<K, V> {
         let mut table = 0usize;
         let mut index = 0usize;
@@ -316,7 +318,7 @@ impl<K, V> HashDict<K, V>
             return false;
         }
 
-        for i in 0..n {
+        for _ in 0..n {
             let idx: usize;
 
             if self.ht[0].used == 0 {

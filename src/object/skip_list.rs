@@ -4,6 +4,7 @@ use rand::prelude::*;
 use std::iter::Skip;
 use core::borrow::{Borrow, BorrowMut};
 use std::cell::{Ref, RefCell};
+use std::ops::Range;
 
 const SKIP_LIST_MAX_LEVEL: usize = 32;
 
@@ -189,10 +190,150 @@ impl SkipList {
         }
 
         self.length += 1;
+    }
 
+    fn first_in_range(&self, range: &RangeSpec) -> Option<Rc<RefCell<SkipListNode>>> {
+        if !self.is_in_range(&range) {
+            return None;
+        }
+
+        let mut x = Rc::clone(&self.header);
+
+        for i in (0..self.level).rev() {
+            loop {
+                let curr = Rc::clone(&x);
+                let this_node = curr.as_ref().borrow();
+                let forward = this_node.level[i].forward.as_ref();
+                if forward.is_none() {
+                    break;
+                }
+                let forward = forward.unwrap();
+                let next_node = forward.as_ref().borrow();
+                if RangeSpec::value_gte_min(next_node.score, &range) {
+                    break;
+                }
+                x = Rc::clone(forward);
+            }
+        }
+
+        x = Rc::clone(x.clone()
+                          .as_ref()
+                          .borrow()
+                          .level[0]
+                          .forward
+                          .as_ref()
+                          .unwrap() // this is an inner range, so the next cannot be None
+        );
+
+        let score = x.as_ref().borrow().score;
+        if !RangeSpec::value_lte_max(score, &range) {
+            return None;
+        }
+
+        Some(x)
+    }
+
+    pub fn is_in_range(&self, range: &RangeSpec) -> bool {
+        if range.min > range.max ||
+            (range.min == range.max && (range.minex || range.maxex)) {
+            return false;
+        }
+
+        let highest = self.highest_score();
+        if highest.is_none() ||
+            !RangeSpec::value_gte_min(highest.unwrap(), &range) {
+            return false;
+        }
+
+        let lowest = self.lowest_score();
+        if lowest.is_none() ||
+            !RangeSpec::value_lte_max(lowest.unwrap(), &range) {
+            return false;
+        }
+
+        true
+    }
+
+    pub fn highest_score(&self) -> Option<f64> {
+        match self.tail {
+            None => None,
+            Some(_) => Some(self.tail
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .borrow()
+                .score
+            ),
+        }
+    }
+
+    pub fn lowest_score(&self) -> Option<f64> {
+        match self.header.as_ref().borrow().level[0].forward {
+            None => None,
+            Some(_) => Some(self.header
+                .as_ref()
+                .borrow()
+                .level[0]
+                .forward
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .borrow()
+                .score
+            )
+        }
     }
 }
 
+pub struct RangeSpec {
+    min: f64,
+    max: f64,
+    minex: bool,
+    maxex: bool,
+}
+
+impl RangeSpec {
+    fn new(min: f64, minex: bool, max: f64, maxex: bool) -> RangeSpec {
+        RangeSpec {
+            min,
+            max,
+            minex,
+            maxex,
+        }
+    }
+
+    fn new_closed(min: f64, max: f64) -> RangeSpec {
+        RangeSpec {
+            min,
+            max,
+            minex: false,
+            maxex: false,
+        }
+    }
+
+    fn new_open(min: f64, max: f64) -> RangeSpec {
+        RangeSpec {
+            min,
+            max,
+            minex: true,
+            maxex: true,
+        }
+    }
+
+    fn value_gte_min(value: f64, range: &Self) -> bool {
+        match range.minex {
+            true => value > range.min,
+            false => value >= range.min,
+        }
+    }
+
+    fn value_lte_max(value: f64, range: &Self) -> bool {
+        match range.maxex {
+            true => value < range.max,
+            false => value <= range.max,
+        }
+    }
+}
 
 #[cfg(test)]
 mod test {
@@ -227,7 +368,27 @@ mod test {
         let o2 = Robj::create_string_object("bar");
 
         list.insert(3.2, o1);
+        assert_eq!(list.length, 1);
         list.insert(0.2, o2);
+        assert_eq!(list.length, 2);
+
+        let range = RangeSpec::new_closed(0.2, 3.2);
+        assert!(list.is_in_range(&range));
+    }
+
+    #[test]
+    fn get_first_in_range() {
+        let mut list = SkipList::new();
+        let o1 = Robj::create_string_object("foo");
+        let o2 = Robj::create_string_object("bar");
+
+        list.insert(0.2, o2);
+        list.insert(3.2, o1);
+        list.insert(2.1, Robj::create_string_object("haha"));
+
+        let node = list.first_in_range(&RangeSpec::new_closed(1.0, 2.2))
+            .unwrap();
+        assert_eq!(node.as_ref().borrow().score, 2.1);
     }
 }
 
