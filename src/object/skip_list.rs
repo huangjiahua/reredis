@@ -135,7 +135,7 @@ impl SkipList {
         SKIP_LIST_MAX_LEVEL
     }
 
-    fn insert(&mut self, score: f64, obj: RobjPtr) {
+    pub fn insert(&mut self, score: f64, obj: RobjPtr) {
         let mut update: Vec<Option<Rc<RefCell<SkipListNode>>>> =
             Vec::with_capacity(SKIP_LIST_MAX_LEVEL);
 
@@ -228,7 +228,7 @@ impl SkipList {
         self.length += 1;
     }
 
-    fn first_in_range(&self, range: &RangeSpec) -> Option<Rc<RefCell<SkipListNode>>> {
+    pub fn first_in_range(&self, range: &RangeSpec) -> Option<Rc<RefCell<SkipListNode>>> {
         if !self.is_in_range(&range) {
             return None;
         }
@@ -285,6 +285,37 @@ impl SkipList {
         }
 
         Some(x)
+    }
+
+    pub fn delete(&mut self, score: f64, obj: &RobjPtr) -> bool {
+        let mut update: Vec<Option<Rc<RefCell<SkipListNode>>>> =
+            (0..SKIP_LIST_MAX_LEVEL).map(|_| None ).collect();
+
+        let mut x = Rc::clone(&self.header);
+
+        for i in (0..self.level).rev() {
+            for node in x.clone().as_ref().borrow().iter(i) {
+                let inner = node.as_ref().borrow();
+                let inner_obj = inner.obj_ref().as_ref().borrow();
+                if inner.score > score || (inner.score == score &&
+                    inner_obj.string() >= obj.as_ref().borrow().string()) {
+                    break;
+                }
+
+                x = Rc::clone(&node);
+            }
+            update[i] = Some(Rc::clone(&x));
+        }
+
+        let x = x.as_ref().borrow().iter(0).next();
+        if let Some(e) = x {
+            if e.as_ref().borrow().score == score
+                && Robj::string_obj_eq(e.as_ptr().borrow().obj_ref(), obj) {
+                // TODO
+                return true;
+            }
+        }
+        false
     }
 
     pub fn is_in_range(&self, range: &RangeSpec) -> bool {
@@ -464,6 +495,24 @@ mod test {
         let node =
             list.last_in_range(&RangeSpec::new_open(0.0, 0.2));
         assert!(node.is_none());
+    }
+
+    #[test]
+    fn delete_elements() {
+        let mut list = SkipList::new();
+        let o1 = Robj::create_string_object("foo");
+        let o2 = Robj::create_string_object("bar");
+
+        list.insert(0.2, o2.clone());
+        list.insert(3.2, o1);
+        list.insert(2.1, Robj::create_string_object("haha"));
+
+        let range = RangeSpec::new_closed(0.2, 2.1);
+        let node = list.first_in_range(&range).unwrap();
+        assert_eq!(node.as_ref().borrow().score, 0.2);
+        list.delete(0.2, &o2);
+        let node = list.first_in_range(&range).unwrap();
+        assert_eq!(node.as_ref().borrow().score, 2.1);
     }
 }
 
