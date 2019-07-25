@@ -92,7 +92,7 @@ impl<K, V> DictTable<K, V>
     }
 }
 
-struct HashDict<K: Default + PartialEq, V: Default> {
+struct Dict<K: Default + PartialEq, V: Default> {
     ht: [DictTable<K, V>; 2],
     rehash_idx: i32,
     iterators: i32,
@@ -101,13 +101,13 @@ struct HashDict<K: Default + PartialEq, V: Default> {
     hash: fn(&K, u64) -> usize,
 }
 
-impl<K, V> HashDict<K, V>
+impl<K, V> Dict<K, V>
     where K: Default + PartialEq, V: Default
 {
-    pub fn new(f: fn(&K, u64) -> usize, hash_seed: u64) -> HashDict<K, V> {
+    pub fn new(f: fn(&K, u64) -> usize, hash_seed: u64) -> Dict<K, V> {
         let table1: DictTable<K, V> = DictTable::new();
         let table2: DictTable<K, V> = DictTable::new();
-        HashDict {
+        Dict {
             ht: [table1, table2],
             rehash_idx: -1,
             iterators: 0,
@@ -512,7 +512,7 @@ impl<K, V> HashDict<K, V>
 }
 
 struct HashDictIterator<'a, K: Default + PartialEq, V: Default> {
-    d: &'a HashDict<K, V>,
+    d: &'a Dict<K, V>,
     table: usize,
     index: usize,
     save: bool,
@@ -585,7 +585,7 @@ mod test {
 
     #[test]
     fn create_a_hash_dict() {
-        let hd: HashDict<usize, usize> = HashDict::new(int_hash_func, 0);
+        let hd: Dict<usize, usize> = Dict::new(int_hash_func, 0);
         let f = hd.hash.borrow();
         assert_eq!(f(&1, 0), 1);
         assert_eq!(hd.iterators, 0);
@@ -594,7 +594,7 @@ mod test {
 
     #[test]
     fn add_some_value() {
-        let mut hd: HashDict<usize, usize> = HashDict::new(int_hash_func, 0);
+        let mut hd: Dict<usize, usize> = Dict::new(int_hash_func, 0);
         hd.add(3, 1).unwrap();
         let r = hd.add(3, 1);
         if let Ok(_) = r {
@@ -604,7 +604,7 @@ mod test {
 
     #[test]
     fn simple_add_and_find() {
-        let mut hd: HashDict<usize, usize> = HashDict::new(int_hash_func, 0);
+        let mut hd: Dict<usize, usize> = Dict::new(int_hash_func, 0);
         hd.add(3, 4).unwrap();
         hd.add(4, 5).unwrap();
         hd.add(5, 6).unwrap();
@@ -626,7 +626,7 @@ mod test {
 
     #[test]
     fn ht_should_resize() {
-        let mut hd: HashDict<usize, usize> = HashDict::new(int_hash_func, 0);
+        let mut hd: Dict<usize, usize> = Dict::new(int_hash_func, 0);
         // insert 4 to 4
         for i in 0..4 {
             hd.add(i, i + 1).unwrap();
@@ -672,7 +672,7 @@ mod test {
 
     #[test]
     fn simple_replace() {
-        let mut hd: HashDict<usize, usize> = HashDict::new(int_hash_func, 0);
+        let mut hd: Dict<usize, usize> = Dict::new(int_hash_func, 0);
         for i in 0..5 {
             assert!(hd.replace(i, i + 1));
         }
@@ -689,7 +689,7 @@ mod test {
 
     #[test]
     fn simple_iterator_test() {
-        let mut hd: HashDict<usize, usize> = HashDict::new(int_hash_func, 0);
+        let mut hd: Dict<usize, usize> = Dict::new(int_hash_func, 0);
         for i in 0..4 {
             hd.add(i, i).unwrap();
         }
@@ -706,7 +706,7 @@ mod test {
 
     #[test]
     fn iterator_test_when_rehashing() {
-        let mut hd: HashDict<usize, usize> = HashDict::new(int_hash_func, 0);
+        let mut hd: Dict<usize, usize> = Dict::new(int_hash_func, 0);
         let mut cnt = 0;
 
         for i in 0..100 {
@@ -726,7 +726,7 @@ mod test {
     }
 
     fn delete_items(k: usize) {
-        let mut hd: HashDict<usize, usize> = HashDict::new(int_hash_func, 0);
+        let mut hd: Dict<usize, usize> = Dict::new(int_hash_func, 0);
 
         for i in 0..100 {
             hd.add(i, i).unwrap();
