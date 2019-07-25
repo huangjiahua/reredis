@@ -116,6 +116,10 @@ impl Robj {
         let ptr = Box::new(value.to_string());
         Self::create_object(RobjType::String, ptr)
     }
+
+    pub fn string_obj_eq(lhs: &RobjPtr, rhs: &RobjPtr) -> bool {
+        lhs.borrow().string() == rhs.borrow().string()
+    }
 }
 
 

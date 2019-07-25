@@ -289,7 +289,7 @@ impl SkipList {
 
     pub fn delete(&mut self, score: f64, obj: &RobjPtr) -> bool {
         let mut update: Vec<Option<Rc<RefCell<SkipListNode>>>> =
-            (0..SKIP_LIST_MAX_LEVEL).map(|_| None ).collect();
+            (0..SKIP_LIST_MAX_LEVEL).map(|_| None).collect();
 
         let mut x = Rc::clone(&self.header);
 
@@ -310,13 +310,53 @@ impl SkipList {
         let x = x.as_ref().borrow().iter(0).next();
         if let Some(e) = x {
             if e.as_ref().borrow().score == score
-                && Robj::string_obj_eq(e.as_ptr().borrow().obj_ref(), obj) {
-                // TODO
+                && Robj::string_obj_eq(e.as_ref().borrow().obj_ref(), obj) {
+                self.delete_node(&e, &update);
                 return true;
             }
         }
         false
     }
+
+    fn delete_node(&mut self, node: &Rc<RefCell<SkipListNode>>,
+                   update: &Vec<Option<Rc<RefCell<SkipListNode>>>>) {
+        let this_node = node.as_ref().borrow();
+        for i in 0..self.level {
+            let mut up = update[i].as_ref().unwrap().as_ref().borrow_mut();
+            let up_next = up.level[i].forward.as_ref();
+            if up_next.is_some() && Rc::ptr_eq(up_next.unwrap(), node) {
+                let forward = this_node.level[i].forward.as_ref();
+                up.level[i].span +=
+                    this_node.level[i].span - 1;
+                up.level[i].forward =
+                    match forward {
+                        None => None,
+                        Some(r) => Some(Rc::clone(r)),
+                    }
+            } else {
+                up.level[i].span -= 1;
+            }
+        }
+
+        if let Some(e) = this_node.level[0].forward.as_ref() {
+            e.as_ref().borrow_mut().backward = match this_node.backward {
+                None => None,
+                Some(ref k) => Some(Weak::clone(k)),
+            }
+        } else {
+            self.tail = match this_node.backward {
+                None => None,
+                Some(ref k) => Some(k.upgrade().unwrap()),
+            }
+        }
+
+        while self.level > 1 &&
+            self.header.as_ref().borrow().level[self.level - 1].forward.is_none() {
+            self.level -= 1;
+        }
+        self.length -= 1;
+    }
+
 
     pub fn is_in_range(&self, range: &RangeSpec) -> bool {
         if range.min > range.max ||
