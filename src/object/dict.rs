@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-use crate::object::RobjPtr;
 use core::borrow::Borrow;
 use std::ops::Deref;
 
@@ -20,14 +18,14 @@ fn next_power(size: usize) -> usize {
     }
 }
 
-struct DictEntry<K: Default + PartialEq, V: Default> {
+struct DictEntry<K: PartialEq, V: Default> {
     pub key: K,
     pub value: V,
-    pub next: Option<Box<DictEntry<K, V>>>,
+    next: Option<Box<DictEntry<K, V>>>,
 }
 
 impl<K, V> DictEntry<K, V>
-    where K: Default + PartialEq, V: Default
+    where K: PartialEq, V: Default
 {
     fn new(key: K, value: V) -> Self {
         DictEntry {
@@ -38,12 +36,12 @@ impl<K, V> DictEntry<K, V>
     }
 }
 
-struct DictEntryIterator<'a, K: Default + PartialEq, V: Default> {
+struct DictEntryIterator<'a, K: PartialEq, V: Default> {
     next: Option<&'a Box<DictEntry<K, V>>>,
 }
 
 impl<'a, K, V> Iterator for DictEntryIterator<'a, K, V>
-    where K: Default + PartialEq, V: Default
+    where K: PartialEq, V: Default
 {
     type Item = &'a Box<DictEntry<K, V>>;
     fn next(&mut self) -> Option<Self::Item> {
@@ -57,7 +55,7 @@ impl<'a, K, V> Iterator for DictEntryIterator<'a, K, V>
 }
 
 
-struct DictTable<K: Default + PartialEq, V: Default> {
+struct DictTable<K: PartialEq, V: Default> {
     pub table: Vec<Option<Box<DictEntry<K, V>>>>,
     pub size: usize,
     pub size_mask: usize,
@@ -65,7 +63,7 @@ struct DictTable<K: Default + PartialEq, V: Default> {
 }
 
 impl<K, V> DictTable<K, V>
-    where K: Default + PartialEq, V: Default
+    where K: PartialEq, V: Default
 {
     fn new() -> DictTable<K, V> {
         DictTable {
@@ -92,7 +90,7 @@ impl<K, V> DictTable<K, V>
     }
 }
 
-struct Dict<K: Default + PartialEq, V: Default> {
+struct Dict<K: PartialEq, V: Default> {
     ht: [DictTable<K, V>; 2],
     rehash_idx: i32,
     iterators: i32,
@@ -102,7 +100,7 @@ struct Dict<K: Default + PartialEq, V: Default> {
 }
 
 impl<K, V> Dict<K, V>
-    where K: Default + PartialEq, V: Default
+    where K: PartialEq, V: Default
 {
     pub fn new(f: fn(&K, u64) -> usize, hash_seed: u64) -> Dict<K, V> {
         let table1: DictTable<K, V> = DictTable::new();
@@ -511,7 +509,7 @@ impl<K, V> Dict<K, V>
     }
 }
 
-struct HashDictIterator<'a, K: Default + PartialEq, V: Default> {
+struct HashDictIterator<'a, K: PartialEq, V: Default> {
     d: &'a Dict<K, V>,
     table: usize,
     index: usize,
@@ -520,7 +518,7 @@ struct HashDictIterator<'a, K: Default + PartialEq, V: Default> {
 }
 
 impl<'a, K, V> Iterator for HashDictIterator<'a, K, V>
-    where K: Default + PartialEq, V: Default {
+    where K: PartialEq, V: Default {
     type Item = &'a Box<DictEntry<K, V>>;
 
     fn next(&mut self) -> Option<Self::Item> {
