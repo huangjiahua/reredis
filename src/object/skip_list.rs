@@ -550,6 +550,7 @@ mod test {
         let range = RangeSpec::new_closed(0.2, 2.1);
         let node = list.first_in_range(&range).unwrap();
         assert_eq!(node.as_ref().borrow().score, 0.2);
+        assert_eq!(node.as_ref().borrow().obj_ref().as_ref().borrow().string(), "bar");
         list.delete(0.2, &o2);
         let node = list.first_in_range(&range).unwrap();
         assert_eq!(node.as_ref().borrow().score, 2.1);

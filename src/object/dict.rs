@@ -186,7 +186,53 @@ impl<K, V> HashDict<K, V>
         None
     }
 
-    // TODO: delete
+    pub fn delete(&mut self, key: &K) -> Result<Box<DictEntry<K, V>>, ()> {
+        let h: usize;
+
+        if self.ht[0].size == 0 {
+            return Err(());
+        }
+
+        self.rehash_step_if_needed();
+
+        h = self.hash_value(key);
+
+        for table in 0..2 {
+            let idx = h & self.ht[table].size_mask;
+
+            let mut prev: Option<&mut Box<DictEntry<K, V>>> = None;
+            let mut he = self.ht[table].table[idx].take();
+
+            while let Some(mut e) = he {
+                if &e.key == key {
+                    match prev {
+                        None => self.ht[table].table[idx] = e.next.take(),
+                        Some(p) => p.next = e.next.take(),
+                    }
+                    self.ht[table].size -= 1;
+                    return Ok(e);
+                }
+
+                he = e.next.take();
+                prev = match prev {
+                    None => {
+                        self.ht[table].table[idx] = Some(e);
+                        self.ht[table].table[idx].as_mut()
+                    }
+                    Some(k) => {
+                        k.next = Some(e);
+                        k.next.as_mut()
+                    }
+                }
+            }
+
+            if !self.is_rehashing() {
+                break;
+            }
+        }
+
+        Err(())
+    }
 
     pub fn iter(&self) -> HashDictIterator<K, V> {
         let mut table = 0usize;
@@ -677,6 +723,30 @@ mod test {
         }
 
         assert_eq!(cnt, 0);
+    }
+
+    fn delete_items(k: usize) {
+        let mut hd: HashDict<usize, usize> = HashDict::new(int_hash_func, 0);
+
+        for i in 0..100 {
+            hd.add(i, i).unwrap();
+        }
+        assert_eq!(hd.fetch_value(&k).unwrap(), &k);
+        let node = hd.delete(&k).unwrap();
+        assert_eq!(node.key, k);
+        assert!(hd.fetch_value(&k).is_none());
+
+        for i in 0..100 {
+            if i == k { continue; }
+            assert_eq!(hd.fetch_value(&i).unwrap(), &i);
+        }
+    }
+
+    #[test]
+    fn delete_items_test() {
+        for i in 0..100 {
+            delete_items(i);
+        }
     }
 
     #[test]
