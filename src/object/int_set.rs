@@ -22,7 +22,7 @@ impl IntSet {
         }
 
         let pos = self.search(value);
-        if let None = pos {
+        if let Ok(_) = pos {
             return Err(());
         }
 
@@ -31,9 +31,7 @@ impl IntSet {
 
         self.resize(self.len() + 1);
 
-        if pos < old_len {
-            self.move_tail(pos, pos + 1);
-        }
+        self.move_tail(pos, pos + 1);
 
         self.set(pos, value);
 
@@ -81,10 +79,39 @@ impl IntSet {
         v
     }
 
-    pub fn search(&self, value: i64) -> Option<usize> {
-        unimplemented!()
-    }
+    pub fn search(&self, value: i64) -> Result<usize, usize> {
+        if self.len() == 0 {
+            return Err(0);
+        } else {
+            if value < self.get(0) {
+                return Err(0);
+            } else if self.get(self.len() - 1) < value {
+                return Err(self.len());
+            }
+        }
 
+        let mut min = 0;
+        let mut max = self.len() - 1;
+        let mut mid = 0;
+        let mut mid_value = 0;
+
+        while min <= max {
+            mid = min + (max - min) / 2;
+            mid_value = self.get(mid);
+            if value < mid_value {
+                max = mid - 1;
+            } else if mid_value < value {
+                min = mid + 1;
+            } else {
+                break;
+            }
+        }
+
+        if mid_value == value {
+            return Ok(mid);
+        }
+        Err(min)
+    }
 
     pub fn len(&self) -> usize {
         let enc = self.0[0] as usize;
@@ -154,8 +181,28 @@ mod test {
 
     #[test]
     fn set_and_get() {
-        for i in 0..i16::MAX {
+        for i in 0..i16::MAX as i64 {
             simple_set_get(i);
+        }
+    }
+
+    #[test]
+    fn search_test() {
+        let mut set = IntSet::new();
+        for i in (0..100).rev() {
+            set.move_tail(0, 1);
+            set.set(0, i);
+            assert_eq!(set.get(0), i);
+        }
+
+        for i in 0..100 {
+            let r = set.search(i).unwrap();
+            assert_eq!(set.get(r), i);
+        }
+
+        for i in 101..200 {
+            let r = set.search(i).unwrap_err();
+            assert_eq!(r, set.len());
         }
     }
 }
