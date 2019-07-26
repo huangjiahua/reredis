@@ -2,6 +2,7 @@ pub mod sds;
 pub mod list;
 pub mod dict;
 pub mod skip_list;
+pub mod int_set;
 
 pub use sds::Sds;
 
