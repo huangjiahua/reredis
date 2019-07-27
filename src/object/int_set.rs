@@ -1,8 +1,8 @@
 use std::mem;
 
-pub struct IntSet(Vec<i8>);
+pub struct IntSet(Vec<u8>);
 
-type Encoding = i8;
+type Encoding = u8;
 
 const INT_SET_ENC_INT16: Encoding = mem::size_of::<i16>() as Encoding;
 const INT_SET_ENC_INT32: Encoding = mem::size_of::<i32>() as Encoding;
@@ -10,7 +10,7 @@ const INT_SET_ENC_INT64: Encoding = mem::size_of::<i64>() as Encoding;
 
 impl IntSet {
     pub fn new() -> IntSet {
-        let mut int_set = vec![0i8; 4];
+        let mut int_set = vec![0u8; 4];
         int_set[0] = INT_SET_ENC_INT16;
         IntSet(int_set)
     }
@@ -26,8 +26,7 @@ impl IntSet {
             return Err(());
         }
 
-        let pos = pos.unwrap();
-        let old_len = self.len();
+        let pos = pos.unwrap_err();
 
         self.resize(self.len() + 1);
 
@@ -39,47 +38,93 @@ impl IntSet {
     }
 
     fn upgrade_and_add(&mut self, value: i64) -> Result<(), ()> {
-        unimplemented!()
+        let old_len = self.len();
+        let val_enc = Self::value_encoding(value);
+        let new_vec_len = (self.len() + 1) * val_enc as usize + 4;
+
+        self.0.resize(new_vec_len, 0);
+
+        let (j, k) = if value < self.get(0) {
+            (1, 0)
+        } else {
+            (0, old_len)
+        };
+
+        for i in (0..old_len).rev() {
+            let v = self.get(i);
+            self.set_by_enc(i + j, val_enc, v);
+        }
+
+        self.set_by_enc(k, val_enc, value);
+
+        self.0[0] = val_enc;
+
+        Ok(())
     }
 
-    fn resize(&mut self, len: usize) {}
+    fn resize(&mut self, _len: usize) {}
 
     fn move_tail(&mut self, from: usize, to: usize) {
-        assert!(to > from);
         let from = self.true_pos(from);
         let to = self.true_pos(to);
-        let diff = to - from;
-        self.0.resize(diff + self.0.len(), 0);
-
-        for p in (to..self.0.len()).rev().map(|x| (x, x - diff)) {
-            self.0.swap(p.0, p.1);
+        if to > from {
+            let diff = to - from;
+            self.0.resize(diff + self.0.len(), 0);
+            for p in (to..self.0.len()).rev().map(|x| (x, x - diff)) {
+                self.0.swap(p.0, p.1);
+            }
+        } else if from > to {
+            let diff = from - to;
+            if from < self.0.len() {
+                for p in (from..self.0.len()).map(|x| (x, x - diff)) {
+                    self.0.swap(p.0, p.1);
+                }
+            }
+            self.0.resize(self.0.len() - diff, 0);
         }
     }
 
     fn set(&mut self, pos: usize, value: i64) {
-        let pos = self.true_pos(pos);
+        self.set_by_enc(pos, self.encoding(), value);
+    }
 
-        for i in 0..(self.encoding() as usize) / mem::size_of::<i8>() {
-            let mut v = value >> (i * mem::size_of::<i8>()) as i64;
+    fn set_by_enc(&mut self, pos: usize, enc: Encoding, value: i64) {
+        let pos = Self::true_pos_enc(pos, enc);
+
+        for i in 0..(enc as usize) {
+            let mut v = value >> (i * 8) as i64;
             v &= 0xff;
-            assert!(v < std::i8::MAX as i64);
-            self.0[pos + i] = v as i8;
+            self.0[pos + i] = v as u8;
         }
     }
 
     fn get(&self, pos: usize) -> i64 {
-        let pos = self.true_pos(pos);
-        let mut v = 0i64;
+        self.get_by_enc(pos, self.encoding())
+    }
 
-        for i in (0..(self.encoding() as usize) / mem::size_of::<i8>()).rev() {
-            v <<= mem::size_of::<i8>() as i64;
-            v |= self.0[pos + i] as i64;
+    fn get_by_enc(&self, pos: usize, enc: Encoding) -> i64 {
+        let pos = Self::true_pos_enc(pos, enc);
+        let enc = enc as usize;
+        let mut v = if self.0[pos + enc - 1] > 127 {
+            -1
+        } else {
+            0
+        };
+
+        for i in (0..enc).rev() {
+            v <<= 8;
+            let k = self.0[pos + i] as i64;
+            v |= k;
         }
 
         v
     }
 
-    pub fn search(&self, value: i64) -> Result<usize, usize> {
+    pub fn find(&self, value: i64) -> bool {
+        self.search(value).is_ok()
+    }
+
+    fn search(&self, value: i64) -> Result<usize, usize> {
         if self.len() == 0 {
             return Err(0);
         } else {
@@ -113,9 +158,33 @@ impl IntSet {
         Err(min)
     }
 
+    pub fn remove(&mut self, value: i64) -> Result<(), ()> {
+        let enc = self.encoding();
+
+        if Self::value_encoding(value) > enc {
+            return Err(());
+        }
+
+        let pos = self.search(value);
+
+        if let Err(_) = pos {
+            return Err(());
+        }
+
+        let pos = pos.unwrap();
+
+        self.move_tail(pos + 1, pos);
+
+        Ok(())
+    }
+
     pub fn len(&self) -> usize {
         let enc = self.0[0] as usize;
         (self.0.len() - 4) / enc
+    }
+
+    pub fn blob_len(&self) -> usize {
+        self.0.len()
     }
 
     fn encoding(&self) -> Encoding {
@@ -133,7 +202,11 @@ impl IntSet {
     }
 
     fn true_pos(&self, pos: usize) -> usize {
-        pos * (self.encoding() as usize) + 4
+        Self::true_pos_enc(pos, self.encoding())
+    }
+
+    fn true_pos_enc(pos: usize, enc: Encoding) -> usize {
+        pos * (enc as usize) + 4
     }
 }
 
@@ -170,6 +243,29 @@ mod test {
         let mut set = IntSet::new();
         set.add(1);
         set.add(2);
+        assert_eq!(set.get(0), 1);
+        assert_eq!(set.get(1), 2);
+        set.add(32767);
+        set.add(-32768);
+        assert_eq!(set.get(0), -32768);
+        assert_eq!(set.get(3), 32767);
+
+        set.add(32768);
+        assert_eq!(set.get(0), -32768);
+        assert_eq!(set.get(1), 1);
+        assert_eq!(set.get(2), 2);
+        assert_eq!(set.get(3), 32767);
+        assert_eq!(set.get(4), 32768);
+
+        set.add(std::i64::MAX);
+        assert_eq!(set.get(0), -32768);
+        assert_eq!(set.get(1), 1);
+        assert_eq!(set.get(2), 2);
+        assert_eq!(set.get(3), 32767);
+        assert_eq!(set.get(4), 32768);
+        assert_eq!(set.get(5), std::i64::MAX);
+
+        set.add(1).unwrap_err();
     }
 
     fn simple_set_get(v: i64) {
@@ -203,6 +299,65 @@ mod test {
         for i in 101..200 {
             let r = set.search(i).unwrap_err();
             assert_eq!(r, set.len());
+        }
+    }
+
+    #[test]
+    fn find_test() {
+        let mut set = IntSet::new();
+        for i in 0..100 {
+            set.add(i).unwrap();
+            set.add(i).unwrap_err();
+        }
+
+        for i in 0..100 {
+            set.add(std::i32::MIN as i64 + i).unwrap();
+            set.add(std::i32::MIN as i64 + i).unwrap_err();
+        }
+
+        for i in 0..100 {
+            set.add(std::i32::MAX as i64 + i).unwrap();
+            set.add(std::i32::MAX as i64 + i).unwrap_err();
+        }
+
+        for i in 0..100 {
+            assert!(set.find(i));
+            assert!(set.find(std::i32::MIN as i64 + i));
+            assert!(set.find(std::i32::MAX as i64 + i));
+            assert!(!set.find(-i - 1));
+        }
+    }
+
+    #[test]
+    fn remove_test() {
+        let mut set = IntSet::new();
+        for i in 0..100 {
+            set.add(i).unwrap();
+        }
+
+        for i in 0..100 {
+            set.add(std::i32::MIN as i64 + i).unwrap();
+        }
+
+        for i in 0..100 {
+            set.add(std::i32::MAX as i64 + i).unwrap();
+        }
+
+        for i in 0..100 {
+            assert!(set.find(i));
+            set.remove(i).unwrap();
+            assert!(!set.find(i));
+
+            assert!(set.find(std::i32::MIN as i64 + i));
+            set.remove(std::i32::MIN as i64 + i);
+            assert!(!set.find(std::i32::MIN as i64 + i));
+
+            assert!(set.find(std::i32::MAX as i64 + i));
+            set.remove(std::i32::MAX as i64 + i);
+            assert!(!set.find(std::i32::MAX as i64 + i));
+
+            assert!(!set.find(-i - 1));
+            set.remove(-i - 1).unwrap_err();
         }
     }
 }
