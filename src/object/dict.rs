@@ -18,14 +18,14 @@ fn next_power(size: usize) -> usize {
     }
 }
 
-struct DictEntry<K: PartialEq, V: Default> {
+struct DictEntry<K: PartialEq, V> {
     pub key: K,
     pub value: V,
     next: Option<Box<DictEntry<K, V>>>,
 }
 
 impl<K, V> DictEntry<K, V>
-    where K: PartialEq, V: Default
+    where K: PartialEq
 {
     fn new(key: K, value: V) -> Self {
         DictEntry {
@@ -36,30 +36,30 @@ impl<K, V> DictEntry<K, V>
     }
 }
 
-struct DictEntryIterator<'a, K: PartialEq, V: Default> {
+struct DictEntryIterator<'a, K: PartialEq, V> {
     next: Option<&'a DictEntry<K, V>>,
 }
 
 impl<'a, K, V> Iterator for DictEntryIterator<'a, K, V>
-    where K: PartialEq, V: Default
+    where K: PartialEq
 {
     type Item = (&'a K, &'a V);
     fn next(&mut self) -> Option<Self::Item> {
         self.next.take().map(|entry| {
             self.next = entry.next
                 .as_ref()
-                .map(|entry| & **entry);
+                .map(|entry| &**entry);
             (&entry.key, &entry.value)
         })
     }
 }
 
-struct DictEntryIteratorMut<'a, K: PartialEq, V: Default> {
+struct DictEntryIteratorMut<'a, K: PartialEq, V> {
     next: Option<&'a mut DictEntry<K, V>>,
 }
 
 impl<'a, K, V> Iterator for DictEntryIteratorMut<'a, K, V>
-    where K: PartialEq, V: Default {
+    where K: PartialEq {
     type Item = (&'a K, &'a mut V);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -73,7 +73,7 @@ impl<'a, K, V> Iterator for DictEntryIteratorMut<'a, K, V>
 }
 
 
-struct DictTable<K: PartialEq, V: Default> {
+struct DictTable<K: PartialEq, V> {
     pub table: Vec<Option<Box<DictEntry<K, V>>>>,
     pub size: usize,
     pub size_mask: usize,
@@ -81,7 +81,7 @@ struct DictTable<K: PartialEq, V: Default> {
 }
 
 impl<K, V> DictTable<K, V>
-    where K: PartialEq, V: Default
+    where K: PartialEq
 {
     fn new() -> DictTable<K, V> {
         DictTable {
@@ -94,7 +94,7 @@ impl<K, V> DictTable<K, V>
 
     fn iter(&self, index: usize) -> DictEntryIterator<K, V> {
         DictEntryIterator {
-            next: self.table[index].as_ref().map(|entry| & **entry)
+            next: self.table[index].as_ref().map(|entry| &**entry)
         }
     }
 
@@ -116,7 +116,7 @@ impl<K, V> DictTable<K, V>
     }
 }
 
-struct Dict<K: PartialEq, V: Default> {
+struct Dict<K: PartialEq, V> {
     ht: [DictTable<K, V>; 2],
     rehash_idx: i32,
     iterators: i32,
@@ -126,7 +126,7 @@ struct Dict<K: PartialEq, V: Default> {
 }
 
 impl<K, V> Dict<K, V>
-    where K: PartialEq, V: Default
+    where K: PartialEq
 {
     pub fn new(f: fn(&K, u64) -> usize, hash_seed: u64) -> Dict<K, V> {
         let table1: DictTable<K, V> = DictTable::new();
@@ -286,18 +286,15 @@ impl<K, V> Dict<K, V>
             save: false,
             entry: self.ht[table].table[index]
                 .as_ref()
-                .map(|e| & **e),
+                .map(|e| &**e),
         }
     }
 
     pub fn add(&mut self, key: K, value: V) -> Result<(), ()> {
-        let entry = self.add_raw(key);
+        let entry = self.add_raw(key, value);
 
         match entry {
-            Some(entry) => {
-                Self::set_val(entry, value);
-                Ok(())
-            }
+            Some(_) => Ok(()),
             None => Err(()),
         }
     }
@@ -355,7 +352,7 @@ impl<K, V> Dict<K, V>
         entry.key = key;
     }
 
-    fn add_raw(&mut self, key: K) -> Option<&mut Box<DictEntry<K, V>>> {
+    fn add_raw(&mut self, key: K, value: V) -> Option<&mut Box<DictEntry<K, V>>> {
         let index;
         let mut entry: DictEntry<K, V>;
         let ht: &mut DictTable<K, V>;
@@ -369,7 +366,7 @@ impl<K, V> Dict<K, V>
 
         ht = self.get_working_ht();
 
-        entry = DictEntry::new(key, Default::default());
+        entry = DictEntry::new(key, value);
         let entry = Box::new(entry);
 
         ht.insert_head(index, entry);
@@ -537,7 +534,7 @@ impl<K, V> Dict<K, V>
     }
 }
 
-pub struct Iter<'a, K: PartialEq, V: Default> {
+pub struct Iter<'a, K: PartialEq, V> {
     d: &'a Dict<K, V>,
     table: usize,
     index: usize,
@@ -546,7 +543,7 @@ pub struct Iter<'a, K: PartialEq, V: Default> {
 }
 
 impl<'a, K, V> Iterator for Iter<'a, K, V>
-    where K: PartialEq, V: Default {
+    where K: PartialEq {
     type Item = (&'a K, &'a V);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -558,7 +555,7 @@ impl<'a, K, V> Iterator for Iter<'a, K, V>
             Some(e) => {
                 self.entry = e.next
                     .as_ref()
-                    .map(|e| & **e);
+                    .map(|e| &**e);
                 // the next is set, don't need to worry
                 // about it
                 if self.entry.is_some() {
@@ -585,7 +582,7 @@ impl<'a, K, V> Iterator for Iter<'a, K, V>
                 // found
                 self.entry = self.d.ht[self.table].table[self.index]
                     .as_ref()
-                    .map(|e| & **e);
+                    .map(|e| &**e);
                 return Some(ret.unwrap());
             }
 
