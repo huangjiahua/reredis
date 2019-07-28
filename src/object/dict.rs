@@ -1,5 +1,5 @@
 use core::borrow::Borrow;
-use std::ops::{Deref, IndexMut};
+use std::ops::IndexMut;
 
 const DICT_HT_INITIAL_SIZE: usize = 4;
 
@@ -258,7 +258,7 @@ impl<K, V> Dict<K, V>
         Err(())
     }
 
-    pub fn iter(&self) -> HashDictIterator<K, V> {
+    pub fn iter(&self) -> Iter<K, V> {
         let mut table = 0usize;
         let mut index = 0usize;
         let mut break_outer = false;
@@ -279,12 +279,14 @@ impl<K, V> Dict<K, V>
             }
         }
 
-        HashDictIterator {
+        Iter {
             d: self,
             table,
             index,
             save: false,
-            entry: self.ht[table].table[index].as_ref(),
+            entry: self.ht[table].table[index]
+                .as_ref()
+                .map(|e| & **e),
         }
     }
 
@@ -319,7 +321,7 @@ impl<K, V> Dict<K, V>
         self.rehash_step_if_needed();
 
         entry = DictEntry::new(key, value);
-        let mut entry = Box::new(entry);
+        let entry = Box::new(entry);
 
         ht = self.get_working_ht();
         let idx = idx & ht.size_mask;
@@ -368,7 +370,7 @@ impl<K, V> Dict<K, V>
         ht = self.get_working_ht();
 
         entry = DictEntry::new(key, Default::default());
-        let mut entry = Box::new(entry);
+        let entry = Box::new(entry);
 
         ht.insert_head(index, entry);
         ht.used += 1;
@@ -520,7 +522,7 @@ impl<K, V> Dict<K, V>
         for table in 0..2 {
             let idx = idx & self.ht[table].size_mask;
 
-            if let Some((k, v)) = self.ht[table]
+            if let Some(_) = self.ht[table]
                 .iter_mut(idx)
                 .filter(|p| *p.0 == key)
                 .next() {
@@ -535,32 +537,34 @@ impl<K, V> Dict<K, V>
     }
 }
 
-struct HashDictIterator<'a, K: PartialEq, V: Default> {
+pub struct Iter<'a, K: PartialEq, V: Default> {
     d: &'a Dict<K, V>,
     table: usize,
     index: usize,
     save: bool,
-    entry: Option<&'a Box<DictEntry<K, V>>>,
+    entry: Option<&'a DictEntry<K, V>>,
 }
 
-impl<'a, K, V> Iterator for HashDictIterator<'a, K, V>
+impl<'a, K, V> Iterator for Iter<'a, K, V>
     where K: PartialEq, V: Default {
-    type Item = &'a Box<DictEntry<K, V>>;
+    type Item = (&'a K, &'a V);
 
     fn next(&mut self) -> Option<Self::Item> {
         let en = self.entry.take();
-        let mut ret = None;
+        let mut ret;
 
         match en {
             None => return None,
             Some(e) => {
-                self.entry = e.next.as_ref();
+                self.entry = e.next
+                    .as_ref()
+                    .map(|e| & **e);
                 // the next is set, don't need to worry
                 // about it
                 if self.entry.is_some() {
-                    return Some(e);
+                    return Some((&e.key, &e.value));
                 }
-                ret = Some(e);
+                ret = Some((&e.key, &e.value));
             }
         }
 
@@ -580,7 +584,8 @@ impl<'a, K, V> Iterator for HashDictIterator<'a, K, V>
             if self.index < self.d.ht[self.table].size {
                 // found
                 self.entry = self.d.ht[self.table].table[self.index]
-                    .as_ref();
+                    .as_ref()
+                    .map(|e| & **e);
                 return Some(ret.unwrap());
             }
 
@@ -721,7 +726,7 @@ mod test {
         let mut cnt = 0;
 
         for en in hd.iter() {
-            assert_eq!(en.key, en.value);
+            assert_eq!(*en.0, *en.1);
             cnt += 1;
         }
 
@@ -742,7 +747,7 @@ mod test {
         }
 
         for en in hd.iter() {
-            assert_eq!(en.key, en.value);
+            assert_eq!(*en.0, *en.1);
             cnt -= 1;
         }
 
