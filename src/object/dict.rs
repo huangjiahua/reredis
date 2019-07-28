@@ -1,5 +1,5 @@
 use core::borrow::Borrow;
-use std::ops::Deref;
+use std::ops::{Deref, IndexMut};
 
 const DICT_HT_INITIAL_SIZE: usize = 4;
 
@@ -37,20 +37,38 @@ impl<K, V> DictEntry<K, V>
 }
 
 struct DictEntryIterator<'a, K: PartialEq, V: Default> {
-    next: Option<&'a Box<DictEntry<K, V>>>,
+    next: Option<&'a DictEntry<K, V>>,
 }
 
 impl<'a, K, V> Iterator for DictEntryIterator<'a, K, V>
     where K: PartialEq, V: Default
 {
-    type Item = &'a Box<DictEntry<K, V>>;
+    type Item = (&'a K, &'a V);
     fn next(&mut self) -> Option<Self::Item> {
-        let curr = self.next.take();
-        if let Some(e) = curr {
-            self.next = e.next.as_ref();
-            return Some(e);
-        }
-        None
+        self.next.take().map(|entry| {
+            self.next = entry.next
+                .as_ref()
+                .map(|entry| & **entry);
+            (&entry.key, &entry.value)
+        })
+    }
+}
+
+struct DictEntryIteratorMut<'a, K: PartialEq, V: Default> {
+    next: Option<&'a mut DictEntry<K, V>>,
+}
+
+impl<'a, K, V> Iterator for DictEntryIteratorMut<'a, K, V>
+    where K: PartialEq, V: Default {
+    type Item = (&'a K, &'a mut V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next.take().map(|entry| {
+            self.next = entry.next
+                .as_mut()
+                .map(|entry| &mut **entry);
+            (&entry.key, &mut entry.value)
+        })
     }
 }
 
@@ -75,7 +93,15 @@ impl<K, V> DictTable<K, V>
     }
 
     fn iter(&self, index: usize) -> DictEntryIterator<K, V> {
-        DictEntryIterator { next: self.table[index].as_ref() }
+        DictEntryIterator {
+            next: self.table[index].as_ref().map(|entry| & **entry)
+        }
+    }
+
+    fn iter_mut(&mut self, index: usize) -> DictEntryIteratorMut<K, V> {
+        DictEntryIteratorMut {
+            next: self.table.index_mut(index).as_mut().map(|entry| &mut **entry)
+        }
     }
 
     fn insert_head(&mut self, idx: usize, mut entry: Box<DictEntry<K, V>>) {
@@ -115,7 +141,7 @@ impl<K, V> Dict<K, V>
         }
     }
 
-    pub fn find(&self, key: &K) -> Option<&Box<DictEntry<K, V>>> {
+    pub fn find(&self, key: &K) -> Option<(&K, &V)> {
         if self.ht[0].size == 0 {
             return None;
         }
@@ -125,11 +151,11 @@ impl<K, V> Dict<K, V>
         for table in 0..2 {
             let idx = h & self.ht[table].size_mask;
 
-            if let Some(he) = self.ht[table]
+            if let Some((k, v)) = self.ht[table]
                 .iter(idx)
-                .filter(|e| e.key == *key)
+                .filter(|e| *e.0 == *key)
                 .next() {
-                return Some(he);
+                return Some((k, v));
             }
 
             // if the dict is not rehashing, the ht[1]
@@ -142,7 +168,7 @@ impl<K, V> Dict<K, V>
         None
     }
 
-    pub fn find_by_mut(&mut self, key: &K) -> Option<&Box<DictEntry<K, V>>> {
+    pub fn find_by_mut(&mut self, key: &K) -> Option<(&K, &V)> {
         if self.ht[0].size == 0 {
             return None;
         }
@@ -153,11 +179,11 @@ impl<K, V> Dict<K, V>
         for table in 0..2 {
             let idx = h & self.ht[table].size_mask;
 
-            if let Some(he) = self.ht[table]
+            if let Some((k, v)) = self.ht[table]
                 .iter(idx)
-                .filter(|e| e.key == *key)
+                .filter(|e| *e.0 == *key)
                 .next() {
-                return Some(he);
+                return Some((k, v));
             }
 
             // if the dict is not rehashing, the ht[1]
@@ -172,14 +198,14 @@ impl<K, V> Dict<K, V>
 
     pub fn fetch_value(&mut self, key: &K) -> Option<&V> {
         if let Some(e) = self.find(key) {
-            return Some(&e.value);
+            return Some(e.1);
         }
         None
     }
 
     pub fn fetch_value_by_mut(&mut self, key: &K) -> Option<&V> {
         if let Some(e) = self.find_by_mut(key) {
-            return Some(&e.value);
+            return Some(e.1);
         }
         None
     }
@@ -411,7 +437,7 @@ impl<K, V> Dict<K, V>
 
             if let Some(_) = self.ht[table]
                 .iter(idx)
-                .filter(|e| e.key == *key)
+                .filter(|e| *e.0 == *key)
                 .next() {
                 return Err(());
             }
@@ -493,12 +519,12 @@ impl<K, V> Dict<K, V>
         let idx = self.hash_value(&key);
         for table in 0..2 {
             let idx = idx & self.ht[table].size_mask;
-            let mut he = self.ht[table].table[idx].as_mut();
-            while let Some(e) = he {
-                if e.key == key {
-                    return None;
-                }
-                he = e.next.as_mut();
+
+            if let Some((k, v)) = self.ht[table]
+                .iter_mut(idx)
+                .filter(|p| *p.0 == key)
+                .next() {
+                return None;
             }
 
             if !self.is_rehashing() {
@@ -608,13 +634,13 @@ mod test {
         hd.add(5, 6).unwrap();
         hd.add(8, 9).unwrap();
         let entry = hd.find(&3).unwrap();
-        assert_eq!(entry.value, 4);
+        assert_eq!(*entry.1, 4);
         let entry = hd.find(&4).unwrap();
-        assert_eq!(entry.value, 5);
+        assert_eq!(*entry.1, 5);
         let entry = hd.find(&5).unwrap();
-        assert_eq!(entry.value, 6);
+        assert_eq!(*entry.1, 6);
         let entry = hd.find(&8).unwrap();
-        assert_eq!(entry.value, 9);
+        assert_eq!(*entry.1, 9);
 
         let entry = hd.find(&2);
         if let Some(_) = entry {
@@ -677,7 +703,7 @@ mod test {
 
         for i in 0..5 {
             let r = hd.find(&i).unwrap();
-            assert_eq!(r.value, i + 1);
+            assert_eq!(*r.1, i + 1);
         }
 
         let a = 1;
