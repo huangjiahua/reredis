@@ -3,6 +3,7 @@ pub mod list;
 pub mod dict;
 pub mod skip_list;
 pub mod int_set;
+pub mod zip_list;
 
 pub use sds::Sds;
 
