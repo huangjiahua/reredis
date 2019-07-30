@@ -74,9 +74,9 @@ impl Encoding {
         }
     }
 
-    fn blob_len_with_content(&self, content: &[u8]) -> usize {
+    fn blob_len_with_content(&self) -> usize {
         match self {
-            Encoding::Str(_) => self.blob_len() + content.len(),
+            Encoding::Str(sz) => self.blob_len() + *sz,
             Encoding::Int(_) => self.blob_len(),
         }
     }
@@ -205,7 +205,7 @@ impl Encoding {
     }
 
     fn write_with_content(&self, dst: &mut [u8], content: &[u8]) {
-        assert_eq!(self.blob_len_with_content(content), dst.len());
+        assert_eq!(self.blob_len_with_content(), dst.len());
         for p in dst.iter_mut().zip(self.iter_with_content(content)) {
             *p.0 = p.1;
         }
@@ -294,18 +294,36 @@ impl Iterator for EncodingIter {
 struct Node<'a> {
     prev_raw_len: usize,
     prev_raw_len_size: usize,
-    len: usize,
-    len_size: usize,
     encoding: Encoding,
-    content: &'a mut [u8],
+    content: &'a [u8],
 }
 
 impl<'a> Node<'a> {
     fn new(x: &'a [u8]) -> Node<'a> {
-        unimplemented!()
+        let prev_raw_len = decode_prev_length(x);
+        let prev_raw_len_size = prev_length_size(prev_raw_len);
+        let encoding = Encoding::parse(&x[prev_raw_len_size..]);
+        Node {
+            prev_raw_len,
+            prev_raw_len_size,
+            encoding,
+            content: x,
+        }
     }
+
     fn header_size(&self) -> usize {
-        self.prev_raw_len_size + self.len_size
+        self.prev_raw_len_size + self.encoding.blob_len()
+    }
+
+    fn blob_len(&self) -> usize {
+        self.prev_raw_len_size + self.encoding.blob_len_with_content()
+    }
+
+    fn parse_blob_len(x: &[u8]) -> usize {
+        let prev_raw_len = decode_prev_length(x);
+        let prev_raw_len_size = prev_length_size(prev_raw_len);
+        let encoding = Encoding::parse(&x[prev_raw_len_size..]);
+        prev_raw_len_size + encoding.blob_len_with_content()
     }
 }
 
@@ -331,7 +349,8 @@ impl ZipList {
     }
 
     pub fn len(&self) -> usize {
-        let mut l = self.get_usize_value(ZIP_LIST_TAIL_OFF_SIZE, ZIP_LIST_LEN_SIZE);
+        let mut l = self.get_usize_value(ZIP_LIST_TAIL_OFF_SIZE,
+                                         ZIP_LIST_LEN_SIZE);
         assert!(l < std::u16::MAX as usize);
         l
     }
@@ -389,7 +408,7 @@ impl ZipList {
         prev_len = if off != self.0.len() {
             decode_prev_length(&self.0[off..])
         } else if self.get_tail_offset() != self.0.len() {
-            unimplemented!()
+            self.tail_blob_len()
         } else {
             0 // at front
         };
@@ -402,8 +421,9 @@ impl ZipList {
             Err(_) => Encoding::Str(s.len()),
         };
 
-        req_len = encoding.blob_len_with_content(s) + prev_len_size;
+        req_len = encoding.blob_len_with_content() + prev_len_size;
 
+        // next diff could be negative
         next_diff = if off != self.0.len() {
             prev_length_size(req_len) as i64 - prev_len_size as i64
         } else {
@@ -412,26 +432,50 @@ impl ZipList {
 
         old_len = self.0.len();
         // TODO: can write the data here
-        self.0.splice(off..off, (0..req_len).map(|_| { 0u8 }));
+        self.0.splice(
+            off..off,
+            (0..(req_len as i64 + next_diff) as usize).map(|_| { 0u8 }),
+        );
 
         if off != old_len {
-            unimplemented!();
+            write_prev_length(
+                req_len,
+                &mut self.0[off + req_len..off + req_len + prev_length_size(req_len)],
+            );
+
+            self.set_tail_offset(self.get_tail_offset() + req_len);
+
+            if off + req_len != self.get_tail_offset() {
+                self.set_tail_offset((self.get_tail_offset() as i64 + next_diff) as usize);
+            }
         } else {
-            self.set_tail_offset(off + req_len);
+            self.set_tail_offset(off);
         }
 
         if next_diff != 0 {
-            unimplemented!();
+            self.cascade_update(off + req_len);
         }
 
         write_prev_length(prev_len, &mut self.0[off..off + prev_len_size]);
         let off = off + prev_len_size;
         encoding.write_with_content(
-            &mut self.0[off..off + encoding.blob_len_with_content(s)],
+            &mut self.0[off..off + encoding.blob_len_with_content()],
             s,
         );
 
         self.incr_len(1);
+    }
+
+    fn cascade_update(&mut self, off: usize) {
+        unimplemented!()
+    }
+
+    fn tail_blob_len(&self) -> usize {
+        Node::parse_blob_len(&self.0[self.get_tail_offset()..])
+    }
+
+    fn header_len(&self) -> usize {
+        ZIP_LIST_HEADER_SIZE
     }
 }
 
@@ -543,4 +587,23 @@ mod test {
         list.push("hello".as_bytes());
         list.push("9".as_bytes());
     }
+
+    #[test]
+    fn simple_insert() {
+        let mut list = ZipList::new();
+        list.push("hello".as_bytes());
+        list.insert(list.header_len(), "112".as_bytes());
+    }
+
+    #[test]
+    fn cascade_update() {
+        let mut list = ZipList::new();
+        let content = &['a' as u8; 250];
+        let big = &['b' as u8; 255];
+        list.push(content);
+        list.push(content);
+        list.push("11".as_bytes());
+        list.insert(list.header_len(), big);
+    }
+
 }
