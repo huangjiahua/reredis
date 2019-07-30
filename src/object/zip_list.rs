@@ -1,4 +1,7 @@
 use std::mem;
+use std::iter::Chain;
+use std::iter::Cloned;
+use std::slice;
 
 const ZIP_LIST_I16_ENC: u8 = 0b1100_0000;
 const ZIP_LIST_I32_ENC: u8 = 0b1101_0000;
@@ -71,6 +74,13 @@ impl Encoding {
         }
     }
 
+    fn blob_len_with_content(&self, content: &[u8]) -> usize {
+        match self {
+            Encoding::Str(_) => self.blob_len() + content.len(),
+            Encoding::Int(_) => self.blob_len(),
+        }
+    }
+
     fn index(&self, idx: usize) -> u8 {
         match self {
             Encoding::Str(_) => self.index_str(idx),
@@ -125,6 +135,14 @@ impl Encoding {
         EncodingIter {
             enc: self.clone(),
             curr: 0,
+        }
+    }
+
+    fn iter_with_content<'a>(&'a self, content: &'a [u8])
+                             -> Chain<EncodingIter, Cloned<slice::Iter<u8>>> {
+        match self {
+            Encoding::Str(_) => self.iter().chain(content.iter().cloned()),
+            Encoding::Int(_) => self.iter().chain("".as_bytes().iter().cloned()),
         }
     }
 
@@ -185,7 +203,75 @@ impl Encoding {
         }
         Encoding::Int(v)
     }
+
+    fn write_with_content(&self, dst: &mut [u8], content: &[u8]) {
+        assert_eq!(self.blob_len_with_content(content), dst.len());
+        for p in dst.iter_mut().zip(self.iter_with_content(content)) {
+            *p.0 = p.1;
+        }
+    }
 }
+
+fn encode_prev_length(len: usize, idx: usize) -> Option<u8> {
+    if len < 254 {
+        if idx != 0 {
+            return None;
+        }
+        return Some(len as u8);
+    }
+    if len < std::u32::MAX as usize {
+        if idx == 0 {
+            return Some(0xfe);
+        }
+        if idx < 5 {
+            return Some(((len >> (4 - idx)) & 0xff) as u8);
+        }
+    }
+    None
+}
+
+fn prev_length_size(len: usize) -> usize {
+    if len < 254 {
+        1
+    } else {
+        5
+    }
+}
+
+fn decode_prev_length(x: &[u8]) -> usize {
+    if x[0] != 0xfe {
+        return x[0] as usize;
+    }
+    let mut v = 0;
+    for i in 1..5 {
+        v <<= 8;
+        v |= x[i] as usize;
+    }
+    v
+}
+
+fn prev_length_iter(len: usize) -> LengthIter {
+    LengthIter(0, len)
+}
+
+fn write_prev_length(len: usize, x: &mut [u8]) {
+    assert_eq!(prev_length_size(len), x.len());
+    for p in x.iter_mut().zip(prev_length_iter(len)) {
+        *p.0 = p.1;
+    }
+}
+
+struct LengthIter(usize, usize);
+
+impl Iterator for LengthIter {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0 += 1;
+        encode_prev_length(self.1, self.0 - 1)
+    }
+}
+
 
 struct EncodingIter {
     enc: Encoding,
@@ -215,6 +301,9 @@ struct Node<'a> {
 }
 
 impl<'a> Node<'a> {
+    fn new(x: &'a [u8]) -> Node<'a> {
+        unimplemented!()
+    }
     fn header_size(&self) -> usize {
         self.prev_raw_len_size + self.len_size
     }
@@ -247,10 +336,14 @@ impl ZipList {
         l
     }
 
+    pub fn push(&mut self, content: &[u8]) {
+        self.insert(self.0.len(), content);
+    }
+
     fn set_usize_value(&mut self, value: usize, off: usize, n: usize) {
         assert!(n <= mem::size_of::<usize>());
         for i in 0..n {
-            let mut v = value >> (i * 8);
+            let mut v = value >> ((n - i - 1) * 8);
             v &= 0xff;
             self.0[off + i] = v as u8;
         }
@@ -267,9 +360,13 @@ impl ZipList {
         self.set_usize_value(len, ZIP_LIST_TAIL_OFF_SIZE, ZIP_LIST_LEN_SIZE);
     }
 
+    fn incr_len(&mut self, by: usize) {
+        self.set_len(self.len() + by);
+    }
+
     fn get_usize_value(&self, off: usize, n: usize) -> usize {
         let mut v = 0usize;
-        for i in (0..n).rev() {
+        for i in 0..n {
             v <<= 8;
             v |= self.0[off + i] as usize;
         }
@@ -281,7 +378,60 @@ impl ZipList {
     }
 
     fn insert(&mut self, off: usize, s: &[u8]) {
-        unimplemented!()
+        let curr_len = self.blob_len();
+        let mut next_diff: i64 = 0;
+        let prev_len;
+        let prev_len_size;
+        let req_len;
+        let old_len;
+        let mut encoding;
+
+        prev_len = if off != self.0.len() {
+            decode_prev_length(&self.0[off..])
+        } else if self.get_tail_offset() != self.0.len() {
+            unimplemented!()
+        } else {
+            0 // at front
+        };
+
+        prev_len_size = prev_length_size(prev_len);
+
+        let string = std::str::from_utf8(s).unwrap();
+        encoding = match string.parse::<i64>() {
+            Ok(i) => Encoding::Int(i),
+            Err(_) => Encoding::Str(s.len()),
+        };
+
+        req_len = encoding.blob_len_with_content(s) + prev_len_size;
+
+        next_diff = if off != self.0.len() {
+            prev_length_size(req_len) as i64 - prev_len_size as i64
+        } else {
+            0
+        };
+
+        old_len = self.0.len();
+        // TODO: can write the data here
+        self.0.splice(off..off, (0..req_len).map(|_| { 0u8 }));
+
+        if off != old_len {
+            unimplemented!();
+        } else {
+            self.set_tail_offset(off + req_len);
+        }
+
+        if next_diff != 0 {
+            unimplemented!();
+        }
+
+        write_prev_length(prev_len, &mut self.0[off..off + prev_len_size]);
+        let off = off + prev_len_size;
+        encoding.write_with_content(
+            &mut self.0[off..off + encoding.blob_len_with_content(s)],
+            s,
+        );
+
+        self.incr_len(1);
     }
 }
 
@@ -385,5 +535,12 @@ mod test {
         for i in (1 << 32) - 50000..(1 << 32) {
             single_str_parsing_test(i);
         }
+    }
+
+    #[test]
+    fn simple_push_test() {
+        let mut list = ZipList::new();
+        list.push("hello".as_bytes());
+        list.push("9".as_bytes());
     }
 }
