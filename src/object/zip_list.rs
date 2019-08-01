@@ -88,7 +88,7 @@ impl Encoding {
         }
     }
 
-    fn index_str(&self, mut idx: usize) -> u8 {
+    fn index_str(&self, idx: usize) -> u8 {
         let len = self.blob_len();
         let mut v = 0;
         assert!(idx < len);
@@ -465,7 +465,7 @@ impl ZipList {
     }
 
     pub fn len(&self) -> usize {
-        let mut l = self.get_usize_value(ZIP_LIST_TAIL_OFF_SIZE,
+        let l = self.get_usize_value(ZIP_LIST_TAIL_OFF_SIZE,
                                          ZIP_LIST_LEN_SIZE);
         assert!(l < std::u16::MAX as usize);
         l
@@ -580,13 +580,12 @@ impl ZipList {
     }
 
     fn inner_insert(&mut self, off: usize, s: &[u8]) {
-        let curr_len = self.blob_len();
-        let mut next_diff: i64 = 0;
+        let next_diff: i64;
         let prev_len;
         let prev_len_size;
         let req_len;
         let old_len;
-        let mut encoding;
+        let encoding;
 
         prev_len = if off != self.0.len() {
             decode_prev_length(&self.0[off..])
@@ -837,6 +836,31 @@ mod test {
         h = list.find("foo".as_bytes()).unwrap();
         h = list.insert(h.indicate(), "foobar".as_bytes());
         assert_eq!(h.value().unwrap_bytes(), "foobar".as_bytes());
+    }
+
+    #[test]
+    fn insert_many() {
+        let mut list = ZipList::new();
+        list.push("hello".as_bytes());
+        for i in 0..500 {
+            let s = String::from("str") + &i.to_string();
+            let h = list.front().unwrap();
+            list.insert(h.indicate(), s.as_bytes());
+        }
+
+        for i in 0..500 {
+            let s = String::from("str") + &i.to_string();
+            let n = list.find(s.as_bytes()).unwrap();
+            assert_eq!(n.value().unwrap_bytes(), s.as_bytes());
+        }
+
+        let mut cnt = 0;
+        for i in list.iter().zip((0..500).rev()) {
+            let s = String::from("str") + &i.1.to_string();
+            assert_eq!(i.0.value().unwrap_bytes(), s.as_bytes());
+            cnt += 1;
+        }
+        assert_eq!(cnt, 500);
     }
 
     #[test]
