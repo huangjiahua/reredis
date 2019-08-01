@@ -2,6 +2,7 @@ use std::mem;
 use std::iter::Chain;
 use std::iter::Cloned;
 use std::slice;
+use std::cell::RefCell;
 
 const ZIP_LIST_I16_ENC: u8 = 0b1100_0000;
 const ZIP_LIST_I32_ENC: u8 = 0b1101_0000;
@@ -224,7 +225,7 @@ fn encode_prev_length(len: usize, idx: usize) -> Option<u8> {
             return Some(0xfe);
         }
         if idx < 5 {
-            return Some(((len >> (4 - idx)) & 0xff) as u8);
+            return Some(((len >> (4 - idx) * 8) & 0xff) as u8);
         }
     }
     None
@@ -318,6 +319,18 @@ impl<'a> ZipListValue<'a> {
     }
 }
 
+impl<'a> PartialEq<&[u8]> for ZipListValue<'a> {
+    fn eq(&self, other: &&[u8]) -> bool {
+        match self {
+            ZipListValue::Bytes(b) => *b == *other,
+            ZipListValue::Int(i) => {
+                let s = std::str::from_utf8(other).unwrap().parse::<i64>();
+                (s.is_ok()) && (s.unwrap() == *i)
+            }
+        }
+    }
+}
+
 struct Node<'a> {
     prev_raw_len: usize,
     prev_raw_len_size: usize,
@@ -362,24 +375,55 @@ impl<'a> Node<'a> {
     }
 }
 
-pub struct Indicator {
-    off: usize
-}
 
-pub struct ZipListNode<'a> {
-    node: Node<'a>,
+pub struct ZipListNodeMut<'a> {
+    list: &'a mut ZipList,
     off: usize,
 }
 
-impl<'a> ZipListNode<'a> {
-    pub fn value(&self) -> ZipListValue<'a> {
-        self.node.value()
+impl<'a> ZipListNodeMut<'a> {
+    pub fn at_end(&self) -> bool {
+        self.off == self.list.0.len()
     }
 
-    pub fn indicate(self) -> Indicator {
-        Indicator {
-            off: self.off
+    pub fn at_begin(&self) -> bool {
+        self.off == self.list.header_len()
+    }
+
+    pub fn value(&'a self) -> ZipListValue<'a> {
+        if self.at_end() {
+            panic!("can't get value at the end of zip_list");
         }
+        Node::new(&self.list.0[self.off..]).value()
+    }
+
+    pub fn insert(mut self, x: &[u8]) -> ZipListNodeMut<'a> {
+        self.list.inner_insert(self.off, x);
+        self
+    }
+
+    pub fn delete(mut self) -> ZipListNodeMut<'a> {
+        if self.at_end() {
+            panic!("can't delete at the end of zip_list");
+        }
+        self.list.inner_delete(self.off, 1);
+        self
+    }
+
+    pub fn move_next(mut self) -> ZipListNodeMut<'a> {
+        if self.at_end() {
+            panic!("can't move_next at the end of zip_list");
+        }
+        self.off += Node::parse_blob_len(&self.list.0[self.off..]);
+        self
+    }
+
+    pub fn move_prev(mut self) -> ZipListNodeMut<'a> {
+        if self.at_begin() {
+            panic!("can't move_prev at the begin of zip_list")
+        }
+        self.off -= decode_prev_length(&self.list.0[self.off..]);
+        self
     }
 }
 
@@ -388,26 +432,19 @@ pub struct Iter<'a> {
     off: usize,
 }
 
-impl<'a> Iter<'a> {
-    fn skip_to(&mut self, i: Indicator) {
-        self.off = i.off;
-    }
-}
-
 impl<'a> Iterator for Iter<'a> {
-    type Item = ZipListNode<'a>;
+    type Item = ZipListValue<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let off = self.off;
-        if off == self.list.0.len() {
-            return None;
+        let n = self.list.get_value(off);
+        match n {
+            None => None,
+            Some(e) => {
+                self.off += Node::parse_blob_len(&self.list.0[off..]);
+                Some(e)
+            }
         }
-        let node = Node::new(&self.list.0[off..]);
-        self.off += node.blob_len();
-        Some(ZipListNode {
-            node,
-            off,
-        })
     }
 }
 
@@ -416,14 +453,8 @@ pub struct IterRev<'a> {
     off: usize,
 }
 
-impl<'a> IterRev<'a> {
-    fn skip_to(&mut self, i: Indicator) {
-        self.off = i.off;
-    }
-}
-
 impl<'a> Iterator for IterRev<'a> {
-    type Item = ZipListNode<'a>;
+    type Item = ZipListValue<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let off = self.off;
@@ -436,10 +467,7 @@ impl<'a> Iterator for IterRev<'a> {
         } else {
             off - prev_len
         };
-        Some(ZipListNode {
-            node: Node::new(&self.list.0[off..]),
-            off,
-        })
+        Some(Node::new(&self.list.0[off..]).value())
     }
 }
 
@@ -466,13 +494,14 @@ impl ZipList {
 
     pub fn len(&self) -> usize {
         let l = self.get_usize_value(ZIP_LIST_TAIL_OFF_SIZE,
-                                         ZIP_LIST_LEN_SIZE);
+                                     ZIP_LIST_LEN_SIZE);
         assert!(l < std::u16::MAX as usize);
         l
     }
 
-    pub fn push(&mut self, content: &[u8]) {
+    pub fn push(&mut self, content: &[u8]) -> ZipListNodeMut {
         self.inner_insert(self.0.len(), content);
+        self.get_node_mut(self.get_tail_offset())
     }
 
     pub fn iter(&self) -> Iter {
@@ -489,31 +518,29 @@ impl ZipList {
         }
     }
 
-    pub fn front(&self) -> Option<ZipListNode> {
-        if self.get_tail_offset() == self.0.len() {
-            None
-        } else {
-            Some(ZipListNode {
-                node: Node::new(&self.0[self.header_len()..]),
-                off: self.header_len(),
-            })
-        }
+    pub fn front(&self) -> Option<ZipListValue> {
+        self.get_value(self.header_len())
     }
 
-    pub fn tail(&self) -> Option<ZipListNode> {
-        if self.get_tail_offset() == self.0.len() {
-            None
-        } else {
-            Some(ZipListNode {
-                node: Node::new(&self.0[self.get_tail_offset()..]),
-                off: self.get_tail_offset(),
-            })
-        }
+    pub fn front_mut(&mut self) -> ZipListNodeMut {
+        self.get_node_mut(self.header_len())
     }
 
-    pub fn find(&self, v: &[u8]) -> Option<ZipListNode> {
+    pub fn tail(&self) -> Option<ZipListValue> {
+        self.get_value(self.get_tail_offset())
+    }
+
+    pub fn tail_mut(&mut self) -> ZipListNodeMut {
+        self.get_node_mut(self.get_tail_offset())
+    }
+
+    pub fn end_mut(&mut self) -> ZipListNodeMut {
+        self.get_node_mut(self.0.len())
+    }
+
+    pub fn find(&self, v: &[u8]) -> Option<ZipListValue> {
         for n in self.iter_rev() {
-            match n.value() {
+            match n {
                 ZipListValue::Bytes(b) => {
                     if b == v {
                         return Some(n);
@@ -531,13 +558,28 @@ impl ZipList {
         None
     }
 
-    pub fn insert(&mut self, i: Indicator, v: &[u8]) -> ZipListNode {
-        let off = i.off;
+    pub fn find_mut(&mut self, v: &[u8]) -> Option<ZipListNodeMut> {
+        let mut n = self.front_mut();
+        while !n.at_end() {
+            if n.value() == v {
+                return Some(n);
+            }
+            n = n.move_next();
+        }
+        None
+    }
 
-        self.inner_insert(off, v);
+    pub fn get_value(&self, off: usize) -> Option<ZipListValue> {
+        if off == self.0.len() {
+            None
+        } else {
+            Some(Node::new(&self.0[off..]).value())
+        }
+    }
 
-        ZipListNode {
-            node: Node::new(&self.0[off..]),
+    pub fn get_node_mut(&mut self, off: usize) -> ZipListNodeMut {
+        ZipListNodeMut {
+            list: self,
             off,
         }
     }
@@ -701,6 +743,48 @@ impl ZipList {
         }
     }
 
+    fn inner_delete(&mut self, off: usize, num: usize) {
+        let mut deleted: usize = 0;
+        let mut next_off: usize = off;
+        let mut next_diff: i64 = 0;
+
+        for _ in 0..num {
+            if next_off == self.0.len() { break; }
+            next_off += Node::parse_blob_len(&self.0[next_off..]);
+            deleted += 1;
+        }
+
+        if next_off > off {
+            if next_off != self.0.len() {
+                let first_prev_len: usize = decode_prev_length(&self.0[off..]);
+                let next_prev_len: usize = decode_prev_length(&self.0[next_off..]);
+                next_diff = prev_length_size(first_prev_len) as i64 -
+                    prev_length_size(next_prev_len) as i64;
+
+                next_off = (next_off as i64 - next_diff as i64) as usize;
+
+                write_prev_length(
+                    first_prev_len,
+                    &mut self.0[next_off..next_off + prev_length_size(first_prev_len)],
+                );
+
+                self.set_tail_offset(
+                    self.get_tail_offset() - (next_off - off)
+                );
+            } else {
+                self.set_tail_offset(
+                    off - decode_prev_length(&self.0[off..])
+                );
+            }
+            self.0.drain(off..next_off);
+            self.set_len(self.len() - deleted);
+
+            if next_diff != 0 {
+                self.cascade_update(off);
+            }
+        }
+    }
+
     fn tail_blob_len(&self) -> usize {
         Node::parse_blob_len(&self.0[self.get_tail_offset()..])
     }
@@ -830,11 +914,11 @@ mod test {
     fn pub_insert_test() {
         let mut list = ZipList::new();
         list.push("foo".as_bytes());
-        let mut h = list.front().unwrap();
-        h = list.insert(h.indicate(), "bar".as_bytes());
+        let mut h = list.front_mut();
+        h = h.insert("bar".as_bytes());
         assert_eq!(h.value().unwrap_bytes(), "bar".as_bytes());
-        h = list.find("foo".as_bytes()).unwrap();
-        h = list.insert(h.indicate(), "foobar".as_bytes());
+        h = list.find_mut("foo".as_bytes()).unwrap();
+        h = h.insert("foobar".as_bytes());
         assert_eq!(h.value().unwrap_bytes(), "foobar".as_bytes());
     }
 
@@ -844,20 +928,19 @@ mod test {
         list.push("hello".as_bytes());
         for i in 0..500 {
             let s = String::from("str") + &i.to_string();
-            let h = list.front().unwrap();
-            list.insert(h.indicate(), s.as_bytes());
+            list.front_mut().insert(s.as_bytes());
         }
 
         for i in 0..500 {
             let s = String::from("str") + &i.to_string();
             let n = list.find(s.as_bytes()).unwrap();
-            assert_eq!(n.value().unwrap_bytes(), s.as_bytes());
+            assert_eq!(n.unwrap_bytes(), s.as_bytes());
         }
 
         let mut cnt = 0;
         for i in list.iter().zip((0..500).rev()) {
             let s = String::from("str") + &i.1.to_string();
-            assert_eq!(i.0.value().unwrap_bytes(), s.as_bytes());
+            assert_eq!(i.0.unwrap_bytes(), s.as_bytes());
             cnt += 1;
         }
         assert_eq!(cnt, 500);
@@ -887,17 +970,76 @@ mod test {
         let mut cnt = 0;
 
         for p in list.iter_rev().zip((0..500i64).rev()) {
-            assert_eq!(p.0.value().unwrap_int(), p.1);
+            assert_eq!(p.0.unwrap_int(), p.1);
             cnt += 1;
         }
 
         assert_eq!(cnt, 500);
 
         for p in list.iter().zip((0..500i64)) {
-            assert_eq!(p.0.value().unwrap_int(), p.1);
+            assert_eq!(p.0.unwrap_int(), p.1);
             cnt -= 1;
         }
 
         assert_eq!(cnt, 0);
+    }
+
+    #[test]
+    fn delete_tail_test() {
+        let mut list = ZipList::new();
+        list.push("foo".as_bytes());
+        list.push("bar".as_bytes());
+        let h = list.find_mut("bar".as_bytes()).unwrap();
+        assert!(h.delete().at_end());
+        let h = list.front_mut();
+        assert!(h.delete().at_end());
+        assert_eq!(list.len(), 0);
+    }
+
+    #[test]
+    fn general_delete_test() {
+        let mut list = ZipList::new();
+        list.push("foo".as_bytes());
+        list.push("bar".as_bytes());
+        list.push("foobar".as_bytes());
+        let mut h = list.find_mut("bar".as_bytes()).unwrap();
+        h = h.delete();
+        assert_eq!(h.value().unwrap_bytes(), "foobar".as_bytes());
+        h = list.front_mut();
+        h = h.delete();
+        assert_eq!(h.value().unwrap_bytes(), "foobar".as_bytes());
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn delete_cascade_update() {
+        let mut list = ZipList::new();
+        let data0 = ['a' as u8; 300];
+        let data1 = ['b' as u8; 246];
+        let data2 = ['c' as u8; 250];
+        list.push(&data0);
+        list.push(&data1);
+        list.push(&data2);
+        list.push(&data2);
+        list.push(&data2);
+        let mut h = list.find_mut(&data1).unwrap().delete();
+        assert_eq!(h.value().unwrap_bytes(), &data2[..]);
+    }
+
+    #[test]
+    fn delete_range_test() {
+//        let mut list = ZipList::new();
+//        for i in 0..255 {
+//            list.push(i.to_string().as_bytes());
+//        }
+//        let mut h = list.front().unwrap();
+//        h = list.delete_range(h.indicate(), 20).unwrap();
+//        assert_eq!(h.value().unwrap_int(), 20);
+//        let i = h.indicate();
+//        h = list.delete_range(i, 30).unwrap();
+//        assert_eq!(h.value().unwrap_int(), 50);
+//        let i = h.indicate();
+//        let h = list.delete_range(i, 205);
+//        assert!(h.is_none());
     }
 }
