@@ -17,6 +17,7 @@ use list::List;
 use zip_list::ZipList;
 use dict::{Dict, DictPartialEq};
 use int_set::IntSet;
+use zset::Zset;
 
 use crate::hash;
 use rand::prelude::*;
@@ -50,6 +51,11 @@ pub trait ObjectData {
     fn list_ref(&self) -> &List {
         panic!("This is not a List");
     }
+    fn set_ref(&self) -> &Set { panic!("This is not a Set"); }
+    fn zip_list_ref(&self) -> &ZipList { panic!("This is not a ZipList"); }
+    fn hash_table_ref(&self) -> &Dict<RobjPtr, RobjPtr> { panic!("This is not a hash table"); }
+    fn int_set_ref(&self) -> &IntSet { panic!("This is not an IntSet"); }
+    fn zset_ref(&self) -> &Zset { panic!("This is not a Zset"); }
 }
 
 type Pointer = Box<dyn ObjectData>;
@@ -193,6 +199,22 @@ impl Robj {
             Box::new(ht),
         )
     }
+
+    pub fn create_zset_object() -> RobjPtr {
+        Self::create_object(
+            RobjType::Zset,
+            RobjEncoding::SkipList,
+            Box::new(Zset::new()),
+        )
+    }
+
+    pub fn create_zset_zip_list_object() -> RobjPtr {
+        Self::create_object(
+            RobjType::Zset,
+            RobjEncoding::ZipList,
+            Box::new(ZipList::new()),
+        )
+    }
 }
 
 impl DictPartialEq for RobjPtr {
@@ -201,17 +223,50 @@ impl DictPartialEq for RobjPtr {
     }
 }
 
-impl ObjectData for List {}
 
-impl ObjectData for ZipList {}
+impl ObjectData for Sds {
+    fn sds_ref(&self) -> &str {
+        self
+    }
+}
+
+impl ObjectData for List {
+    fn list_ref(&self) -> &List {
+        self
+    }
+}
+
+impl ObjectData for ZipList {
+    fn zip_list_ref(&self) -> &ZipList {
+        self
+    }
+}
 
 type Set = Dict<RobjPtr, ()>;
 
-impl ObjectData for Set {}
+impl ObjectData for Set {
+    fn set_ref(&self) -> &Set {
+        self
+    }
+}
 
-impl ObjectData for IntSet {}
+impl ObjectData for IntSet {
+    fn int_set_ref(&self) -> &IntSet {
+        self
+    }
+}
 
-impl ObjectData for Dict<RobjPtr, RobjPtr> {}
+impl ObjectData for Dict<RobjPtr, RobjPtr> {
+    fn hash_table_ref(&self) -> &Dict<RobjPtr, RobjPtr> {
+        self
+    }
+}
+
+impl ObjectData for Zset {
+    fn zset_ref(&self) -> &Zset {
+        self
+    }
+}
 
 
 #[cfg(test)]

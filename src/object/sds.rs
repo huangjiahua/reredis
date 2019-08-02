@@ -2,11 +2,6 @@ use crate::object::ObjectData;
 
 pub type Sds = String;
 
-impl ObjectData for Sds {
-    fn sds_ref(&self) -> &str {
-        self
-    }
-}
 
 trait SdsString {
     fn sds_empty() -> Sds;
