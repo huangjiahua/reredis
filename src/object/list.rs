@@ -3,11 +3,11 @@ use crate::object::{Sds, ObjectData, RobjPtr};
 
 pub type List = LinkedList<RobjPtr>;
 
-impl ObjectData for List {
-    fn list_ref(&self) -> &List {
-        self
-    }
-}
+//impl ObjectData for List {
+//    fn list_ref(&self) -> &List {
+//        self
+//    }
+//}
 
 //struct List<T>(LinkedList<T>);
 //

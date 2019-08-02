@@ -116,7 +116,7 @@ impl<K, V> DictTable<K, V>
     }
 }
 
-struct Dict<K: PartialEq, V> {
+pub struct Dict<K: PartialEq, V> {
     ht: [DictTable<K, V>; 2],
     rehash_idx: i32,
     iterators: i32,
@@ -210,7 +210,7 @@ impl<K, V> Dict<K, V>
         None
     }
 
-    pub fn delete(&mut self, key: &K) -> Result<Box<DictEntry<K, V>>, ()> {
+    fn delete(&mut self, key: &K) -> Result<Box<DictEntry<K, V>>, ()> {
         let h: usize;
 
         if self.ht[0].size == 0 {

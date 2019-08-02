@@ -39,7 +39,7 @@ impl Encoding {
     }
 
     fn is_int(&self) -> bool {
-        !self.is_str()
+            !self.is_str()
     }
 
     fn blob_len(&self) -> usize {
@@ -410,6 +410,14 @@ impl<'a> ZipListNodeMut<'a> {
         self
     }
 
+    pub fn delete_range(mut self, num: usize) -> ZipListNodeMut<'a> {
+        if self.at_end() {
+            panic!("can't delete at the end of zip_list");
+        }
+        self.list.inner_delete(self.off, num);
+        self
+    }
+
     pub fn move_next(mut self) -> ZipListNodeMut<'a> {
         if self.at_end() {
             panic!("can't move_next at the end of zip_list");
@@ -474,7 +482,7 @@ impl<'a> Iterator for IterRev<'a> {
 
 // ZipList
 // | tail offset: sizeof(usize) | number of nodes: sizeof(u16) | node 1 | node 2 | ... | node N |
-struct ZipList(Vec<u8>);
+pub struct ZipList(Vec<u8>);
 
 const ZIP_LIST_TAIL_OFF_SIZE: usize = mem::size_of::<usize>();
 const ZIP_LIST_LEN_SIZE: usize = mem::size_of::<u16>();
@@ -1028,18 +1036,16 @@ mod test {
 
     #[test]
     fn delete_range_test() {
-//        let mut list = ZipList::new();
-//        for i in 0..255 {
-//            list.push(i.to_string().as_bytes());
-//        }
-//        let mut h = list.front().unwrap();
-//        h = list.delete_range(h.indicate(), 20).unwrap();
-//        assert_eq!(h.value().unwrap_int(), 20);
-//        let i = h.indicate();
-//        h = list.delete_range(i, 30).unwrap();
-//        assert_eq!(h.value().unwrap_int(), 50);
-//        let i = h.indicate();
-//        let h = list.delete_range(i, 205);
-//        assert!(h.is_none());
+        let mut list = ZipList::new();
+        for i in 0..255 {
+            list.push(i.to_string().as_bytes());
+        }
+        let h = list.front_mut();
+        let h = h.delete_range(20);
+        assert_eq!(h.value().unwrap_int(), 20);
+        let h = h.delete_range(30);
+        assert_eq!(h.value().unwrap_int(), 50);
+        let h = h.delete_range(205);
+        assert!(h.at_end());
     }
 }

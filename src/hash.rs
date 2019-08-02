@@ -1,7 +1,7 @@
 use crate::object::{Sds, RobjPtr};
 use murmurhash64::murmur_hash64a;
 
-fn sds_hash(data: &str, seed: u64) -> usize {
+pub fn sds_hash(data: &Sds, seed: u64) -> usize {
     murmur_hash64a(data.as_bytes(), seed) as usize
 }
 
