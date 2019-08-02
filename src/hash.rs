@@ -5,7 +5,7 @@ pub fn sds_hash(data: &Sds, seed: u64) -> usize {
     murmur_hash64a(data.as_bytes(), seed) as usize
 }
 
-fn string_object_hash(object: &RobjPtr, seed: u64) -> usize {
+pub fn string_object_hash(object: &RobjPtr, seed: u64) -> usize {
     let object = object.borrow();
     let string = object.string();
     murmur_hash64a(string.as_bytes(), seed) as usize

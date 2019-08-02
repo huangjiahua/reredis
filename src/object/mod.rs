@@ -5,16 +5,18 @@ pub mod skip_list;
 pub mod int_set;
 pub mod zip_list;
 
-pub use sds::Sds;
 
 use std::time::SystemTime;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::error::Error;
+
+pub use sds::Sds;
 use list::List;
 use zip_list::ZipList;
-use dict::Dict;
-use std::any::Any;
+use dict::{Dict, DictPartialEq};
+use int_set::IntSet;
+
 use crate::hash;
 use rand::prelude::*;
 
@@ -165,12 +167,36 @@ impl Robj {
     pub fn create_set_object() -> RobjPtr {
         let mut rng = rand::thread_rng();
         let mut num: u64 = rng.gen();
-        let s: Set = Dict::new(hash::sds_hash, num);
+        let s: Set = Dict::new(hash::string_object_hash, num);
         Self::create_object(
             RobjType::Set,
             RobjEncoding::Ht,
             Box::new(s),
         )
+    }
+
+    pub fn create_int_set_object() -> RobjPtr {
+        Self::create_object(
+            RobjType::Set,
+            RobjEncoding::IntSet,
+            Box::new(IntSet::new()),
+        )
+    }
+
+    pub fn create_hash_object() -> RobjPtr {
+        let mut num: u64 = rand::thread_rng().gen();
+        let ht: Dict<RobjPtr, RobjPtr> = Dict::new(hash::string_object_hash, num);
+        Self::create_object(
+            RobjType::Hash,
+            RobjEncoding::Ht,
+            Box::new(ht),
+        )
+    }
+}
+
+impl DictPartialEq for RobjPtr {
+    fn eq(&self, other: &Self) -> bool {
+        self.borrow().string() == other.borrow().string()
     }
 }
 
@@ -178,9 +204,13 @@ impl ObjectData for List {}
 
 impl ObjectData for ZipList {}
 
-type Set = Dict<Sds, ()>;
+type Set = Dict<RobjPtr, ()>;
 
 impl ObjectData for Set {}
+
+impl ObjectData for IntSet {}
+
+impl ObjectData for Dict<RobjPtr, RobjPtr> {}
 
 
 #[cfg(test)]
