@@ -18,14 +18,18 @@ fn next_power(size: usize) -> usize {
     }
 }
 
-struct DictEntry<K: PartialEq, V> {
+pub trait DictPartialEq<RHS: ?Sized = Self> {
+    fn eq(&self, other: &RHS) -> bool;
+}
+
+struct DictEntry<K: DictPartialEq, V> {
     pub key: K,
     pub value: V,
     next: Option<Box<DictEntry<K, V>>>,
 }
 
 impl<K, V> DictEntry<K, V>
-    where K: PartialEq
+    where K: DictPartialEq
 {
     fn new(key: K, value: V) -> Self {
         DictEntry {
@@ -36,12 +40,12 @@ impl<K, V> DictEntry<K, V>
     }
 }
 
-struct DictEntryIterator<'a, K: PartialEq, V> {
+struct DictEntryIterator<'a, K: DictPartialEq, V> {
     next: Option<&'a DictEntry<K, V>>,
 }
 
 impl<'a, K, V> Iterator for DictEntryIterator<'a, K, V>
-    where K: PartialEq
+    where K: DictPartialEq
 {
     type Item = (&'a K, &'a V);
     fn next(&mut self) -> Option<Self::Item> {
@@ -54,12 +58,12 @@ impl<'a, K, V> Iterator for DictEntryIterator<'a, K, V>
     }
 }
 
-struct DictEntryIteratorMut<'a, K: PartialEq, V> {
+struct DictEntryIteratorMut<'a, K: DictPartialEq, V> {
     next: Option<&'a mut DictEntry<K, V>>,
 }
 
 impl<'a, K, V> Iterator for DictEntryIteratorMut<'a, K, V>
-    where K: PartialEq {
+    where K: DictPartialEq {
     type Item = (&'a K, &'a mut V);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -73,7 +77,7 @@ impl<'a, K, V> Iterator for DictEntryIteratorMut<'a, K, V>
 }
 
 
-struct DictTable<K: PartialEq, V> {
+struct DictTable<K: DictPartialEq, V> {
     pub table: Vec<Option<Box<DictEntry<K, V>>>>,
     pub size: usize,
     pub size_mask: usize,
@@ -81,7 +85,7 @@ struct DictTable<K: PartialEq, V> {
 }
 
 impl<K, V> DictTable<K, V>
-    where K: PartialEq
+    where K: DictPartialEq
 {
     fn new() -> DictTable<K, V> {
         DictTable {
@@ -116,7 +120,7 @@ impl<K, V> DictTable<K, V>
     }
 }
 
-pub struct Dict<K: PartialEq, V> {
+pub struct Dict<K: DictPartialEq, V> {
     ht: [DictTable<K, V>; 2],
     rehash_idx: i32,
     iterators: i32,
@@ -126,7 +130,7 @@ pub struct Dict<K: PartialEq, V> {
 }
 
 impl<K, V> Dict<K, V>
-    where K: PartialEq
+    where K: DictPartialEq
 {
     pub fn new(f: fn(&K, u64) -> usize, hash_seed: u64) -> Dict<K, V> {
         let table1: DictTable<K, V> = DictTable::new();
@@ -153,7 +157,7 @@ impl<K, V> Dict<K, V>
 
             if let Some((k, v)) = self.ht[table]
                 .iter(idx)
-                .filter(|e| *e.0 == *key)
+                .filter(|e| e.0.eq(key))
                 .next() {
                 return Some((k, v));
             }
@@ -181,7 +185,7 @@ impl<K, V> Dict<K, V>
 
             if let Some((k, v)) = self.ht[table]
                 .iter(idx)
-                .filter(|e| *e.0 == *key)
+                .filter(|e| e.0.eq(key))
                 .next() {
                 return Some((k, v));
             }
@@ -210,7 +214,7 @@ impl<K, V> Dict<K, V>
         None
     }
 
-    fn delete(&mut self, key: &K) -> Result<Box<DictEntry<K, V>>, ()> {
+    pub fn delete(&mut self, key: &K) -> Result<(K, V), ()> {
         let h: usize;
 
         if self.ht[0].size == 0 {
@@ -228,13 +232,13 @@ impl<K, V> Dict<K, V>
             let mut he = self.ht[table].table[idx].take();
 
             while let Some(mut e) = he {
-                if &e.key == key {
+                if e.key.eq(key) {
                     match prev {
                         None => self.ht[table].table[idx] = e.next.take(),
                         Some(p) => p.next = e.next.take(),
                     }
                     self.ht[table].size -= 1;
-                    return Ok(e);
+                    return Ok((e.key, e.value));
                 }
 
                 he = e.next.take();
@@ -436,7 +440,7 @@ impl<K, V> Dict<K, V>
 
             if let Some(_) = self.ht[table]
                 .iter(idx)
-                .filter(|e| *e.0 == *key)
+                .filter(|e| e.0.eq(key))
                 .next() {
                 return Err(());
             }
@@ -521,7 +525,7 @@ impl<K, V> Dict<K, V>
 
             if let Some(_) = self.ht[table]
                 .iter_mut(idx)
-                .filter(|p| *p.0 == key)
+                .filter(|p| p.0.eq(&key))
                 .next() {
                 return None;
             }
@@ -534,7 +538,7 @@ impl<K, V> Dict<K, V>
     }
 }
 
-pub struct Iter<'a, K: PartialEq, V> {
+pub struct Iter<'a, K: DictPartialEq, V> {
     d: &'a Dict<K, V>,
     table: usize,
     index: usize,
@@ -543,7 +547,7 @@ pub struct Iter<'a, K: PartialEq, V> {
 }
 
 impl<'a, K, V> Iterator for Iter<'a, K, V>
-    where K: PartialEq {
+    where K: DictPartialEq {
     type Item = (&'a K, &'a V);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -608,6 +612,11 @@ mod test {
         i.clone()
     }
 
+    impl DictPartialEq for usize {
+        fn eq(&self, other: &Self) -> bool {
+            *self == *other
+        }
+    }
 
     #[test]
     fn create_a_hash_dict() {
@@ -759,7 +768,7 @@ mod test {
         }
         assert_eq!(hd.fetch_value(&k).unwrap(), &k);
         let node = hd.delete(&k).unwrap();
-        assert_eq!(node.key, k);
+        assert_eq!(node.0, k);
         assert!(hd.fetch_value(&k).is_none());
 
         for i in 0..100 {
