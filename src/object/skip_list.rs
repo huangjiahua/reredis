@@ -105,7 +105,7 @@ pub struct SkipList {
 }
 
 impl SkipList {
-    fn new() -> SkipList {
+    pub fn new() -> SkipList {
         let mut header =
             SkipListNode::new(SKIP_LIST_MAX_LEVEL, 0.0, None);
 
