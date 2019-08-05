@@ -7,3 +7,4 @@ edition = "2018"
 [dependencies]
 murmurhash64 = "0.3.1"
 rand = "0.7.0"
+chrono = "0.4.7"
