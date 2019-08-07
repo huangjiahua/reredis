@@ -475,13 +475,13 @@ mod test {
     #[test]
     fn generate_rand_level() {
         let mut levels = vec![0usize; 33];
-        for i in 0..100000 {
+        for i in 0..1000000 {
             let l = SkipList::random_level();
             levels[l] += 1;
         }
 
-        let q = levels.iter().skip(2);
-        for p in levels.iter().skip(1).zip(q) {
+        let q = levels.iter().skip(6);
+        for p in levels.iter().skip(5).zip(q) {
             assert!(p.0 >= p.1);
         }
     }
