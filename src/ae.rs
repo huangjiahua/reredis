@@ -4,84 +4,136 @@ use std::time::{SystemTime, Duration};
 use std::ops::Add;
 use std::error::Error;
 use std::net::Shutdown::Read;
+use std::alloc::System;
+use std::rc::Rc;
+use mio::net::{TcpListener, TcpStream};
 
 type AeTimeProc = fn(el: &mut AeEventLoop, id: i64, data: &Box<dyn ClientData>) -> i32;
-type AeFileProc = fn(el: &mut AeEventLoop, token: Token, data: &Box<dyn ClientData>, mask: i32);
+type AeFileProc = fn(el: &mut AeEventLoop, fd: &Fd, data: &Box<dyn ClientData>, mask: i32);
 type AeEventFinalizerProc = fn(el: &mut AeEventLoop, data: &Box<dyn ClientData>);
-type Fd = Box<dyn Evented>;
+pub type Fd = Rc<Fdp>;
+
+pub enum Fdp {
+    Listener(TcpListener),
+    Stream(TcpStream),
+}
+
+impl Fdp {
+    pub fn is_listener(&self) -> bool {
+        match self {
+            Fdp::Listener(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_stream(&self) -> bool {
+        match self {
+            Fdp::Stream(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn to_evented(&self) -> &dyn Evented {
+        match self {
+            Fdp::Stream(s) => s,
+            Fdp::Listener(l) => l,
+        }
+    }
+
+    pub fn unwrap_listener(&self) -> &TcpListener {
+        match self {
+            Fdp::Listener(l) => l,
+            _ => panic!("not a listener"),
+        }
+    }
+
+    pub fn unwrap_stream(&self) -> &TcpStream {
+        match self {
+            Fdp::Stream(s) => s,
+            _ => panic!("not a stream"),
+        }
+    }
+}
 
 fn default_ae_time_proc(el: &mut AeEventLoop, id: i64, data: &Box<dyn ClientData>) -> i32 { 1 }
 
 fn default_ae_file_proc(el: &mut AeEventLoop, token: Token, data: &Box<dyn ClientData>, mask: i32) {}
 
-fn default_ae_event_finalizer_proc(el: &mut AeEventLoop, data: &Box<dyn ClientData>) {}
+pub fn default_ae_event_finalizer_proc(el: &mut AeEventLoop, data: &Box<dyn ClientData>) {}
 
-struct AeEventLoop {
+pub struct AeEventLoop {
     time_event_next_id: i64,
-    file_event_head: Option<Box<AeFileEvent>>,
+    file_events: Vec<Option<AeFileEvent>>,
+    occupied: Option<usize>,
     time_event_head: Option<Box<AeTimeEvent>>,
     stop: bool,
 }
 
 impl AeEventLoop {
-    fn new() -> AeEventLoop {
-        AeEventLoop {
+    pub fn new(n: usize) -> AeEventLoop {
+        let mut el = AeEventLoop {
             time_event_next_id: 0,
-            file_event_head: None,
+            file_events: Vec::with_capacity(n),
+            occupied: None,
             time_event_head: None,
             stop: false,
+        };
+        for i in 0..n {
+            el.file_events.push(None);
         }
+        el
     }
 
-    fn stop(&mut self) {
+    pub fn stop(&mut self) {
         self.stop = true;
     }
 
-    fn create_file_event(
+    pub fn create_file_event(
         &mut self,
         fd: Fd,
         mask: i32,
         file_proc: AeFileProc,
         client_data: Box<dyn ClientData>,
         finalizer_proc: AeEventFinalizerProc,
-    ) {
+    ) -> Result<(), ()> {
         let mut fe = AeFileEvent {
             fd,
             mask,
             file_proc,
             finalizer_proc,
             client_data,
-            next: None,
         };
 
-        fe.next = self.file_event_head.take();
-        self.file_event_head = Some(Box::new(fe));
+        for i in 0..self.file_events.len() {
+            if self.file_events[i].is_none() &&
+                self.occupied.map(|x| x != i).unwrap_or(true) {
+                self.file_events[i] = Some(fe);
+                return Ok(());
+            }
+        }
+
+        Err(())
+    }
+
+    fn occupy_file_event(&mut self, i: usize) {
+        self.occupied = Some(i);
     }
 
     fn delete_file_event(&mut self, fd: &Fd, mask: i32) {
-        let mut prev: Option<&mut Box<AeFileEvent>> = None;
-        let mut fe = self.file_event_head.take();
-
-        while let Some(mut e) = fe {
-            if e.mask == mask && eq(&e.fd, fd) {
-                match prev {
-                    None => self.file_event_head = e.next.take(),
-                    Some(k) => k.next = e.next.take(),
-                }
-                e.finalizer_proc.borrow()(self, &e.client_data);
-                break;
-            }
-            fe = e.next.take();
-            match prev {
-                None => {
-                    self.file_event_head = Some(e);
-                    prev = self.file_event_head.as_mut();
-                }
-                Some(k) => {
-                    k.next = Some(e);
-                    prev = k.next.as_mut();
+        let mut del: Option<usize> = None;
+        for i in 0..self.file_events.len() {
+            let p = self.file_events[i]
+                .as_ref()
+                .map(|x| (&x.fd, x.mask));
+            if let Some(p) = p {
+                if Rc::ptr_eq(p.0, fd) && mask == p.1 {
+                    del = Some(i);
+                    break;
                 }
             }
+        }
+        if let Some(i) = del {
+            self.file_events[i] = None;
         }
     }
 
@@ -148,8 +200,9 @@ impl AeEventLoop {
         nearest
     }
 
-    fn process_events(&mut self, flags: i32) -> Result<i32, Box<dyn Error>> {
-        let mut token: usize = 0;
+    fn process_events(&mut self, flags: i32) -> Result<usize, Box<dyn Error>> {
+        let mut num: usize = 0;
+        let mut processed: usize = 0;
         // nothing to do, return ASAP
         if (flags & AE_TIME_EVENTS == 0) && (flags & AE_FILE_EVENTS) == 0 {
             return Ok(0);
@@ -157,45 +210,78 @@ impl AeEventLoop {
 
         let poll = Poll::new()?;
 
-        let mut fe = self.file_event_head.as_ref();
-        if flags & AE_ALL_EVENTS != 0 {
-            while let Some(e) = fe {
-                let mut ready = Ready::empty();
-                if e.mask & AE_READABLE != 0 {
-                    ready |= Ready::readable();
+        if flags & AE_FILE_EVENTS != 0 {
+            for i in 0..self.file_events.len() {
+                if let Some(e) = self.file_events[i].as_ref() {
+                    let mut ready: Ready = Ready::empty();
+                    if e.mask & AE_READABLE != 0 {
+                        ready |= Ready::readable();
+                    }
+                    if e.mask & AE_WRITABLE != 0 {
+                        ready |= Ready::writable();
+                    }
+                    poll.register(
+                        e.fd.as_ref().to_evented(),
+                        Token(i),
+                        ready,
+                        PollOpt::edge(),
+                    )?;
+                    num += 1;
                 }
-                if e.mask & AE_WRITABLE != 0 {
-                    ready |= Ready::writable();
-                }
-                poll.register(
-                    &e.fd,
-                    Token(token),
-                    ready,
-                    PollOpt::edge(),
-                )?;
-                token += 1;
             }
         }
 
-        if token != 0 || ((flags & AE_TIME_EVENTS != 0) && (flags & AE_DONT_WAIT == 0)) {
-            let mut shortest: Option<&Box<AeTimeEvent>> = None;
-            let mut duration: Option<Duration> = None;
-
+        if self.file_events.len() > 0 ||
+            ((flags & AE_TIME_EVENTS != 0) && (flags & AE_DONT_WAIT == 0)) {
+            let mut wait: Option<Duration> = None;
+            let mut shortest: Option<SystemTime> = None;
             if (flags & AE_TIME_EVENTS != 0) && (flags & AE_DONT_WAIT == 0) {
-                shortest = self.search_nearest_timer();
+                let te = self.search_nearest_timer();
+                if let Some(te) = te {
+                    shortest = Some(te.when.clone());
+                }
             }
 
             if let Some(shortest) = shortest {
                 let curr = SystemTime::now();
-                duration = Some(shortest.when.duration_since(curr)?);
-            }  // else the duration is None and poll won't wait
+                if curr > shortest {
+                    wait = Some(Duration::from_secs(0));
+                } else {
+                    wait = Some(shortest.duration_since(curr).unwrap());
+                }
+            }
 
-            let mut events = Events::with_capacity(token + 1);
-            let n: usize = poll.poll(&mut events, duration)?;
+            let mut events = Events::with_capacity(num);
+            let event_num = poll.poll(&mut events, wait)?;
+            for event in &events {
+                let t = event.token();
+                let fe = self.file_events[t.0].take().unwrap();
+                self.occupy_file_event(t.0);
 
-            // TODO
+                fe.file_proc.borrow()(self, &fe.fd, &fe.client_data, fe.mask);
+
+                self.file_events[t.0] = Some(fe);
+                processed += 1;
+            }
         }
-        Ok(1)
+
+        if flags & AE_TIME_EVENTS != 0 {
+            processed += self.process_time_events();
+        }
+
+        Ok(processed)
+    }
+
+    fn process_time_events(&mut self) -> usize {
+//        unimplemented!()
+        0
+    }
+
+    pub fn main(&mut self) {
+        self.stop = false;
+        while !self.stop {
+            self.process_events(AE_ALL_EVENTS);
+        }
     }
 }
 
@@ -205,7 +291,6 @@ struct AeFileEvent {
     file_proc: AeFileProc,
     finalizer_proc: AeEventFinalizerProc,
     client_data: Box<dyn ClientData>,
-    next: Option<Box<AeFileEvent>>,
 }
 
 struct AeTimeEvent {
@@ -217,11 +302,6 @@ struct AeTimeEvent {
     next: Option<Box<AeTimeEvent>>,
 }
 
-fn eq<T: ?Sized>(left: &Box<T>, right: &Box<T>) -> bool {
-    let left: *const T = left.as_ref();
-    let right: *const T = right.as_ref();
-    left == right
-}
 
 fn ae_wait(fd: &Fd, mask: i32, duration: Duration) -> Result<i32, Box<dyn Error>> {
     let poll = Poll::new()?;
@@ -235,7 +315,7 @@ fn ae_wait(fd: &Fd, mask: i32, duration: Duration) -> Result<i32, Box<dyn Error>
     }
     // TODO: exception?
 
-    poll.register(fd, Token(0), ready, PollOpt::edge())?;
+    poll.register(fd.as_ref().to_evented(), Token(0), ready, PollOpt::edge())?;
     let mut events = Events::with_capacity(1);
 
     poll.poll(&mut events, Some(duration))?;
@@ -250,7 +330,9 @@ fn ae_wait(fd: &Fd, mask: i32, duration: Duration) -> Result<i32, Box<dyn Error>
     unreachable!()
 }
 
-trait ClientData {}
+pub trait ClientData {}
+
+impl ClientData for i32 {}
 
 pub const AE_READABLE: i32 = 0b0001;
 pub const AE_WRITABLE: i32 = 0b0010;
@@ -266,37 +348,35 @@ pub const AE_DONT_WAIT: i32 = 0b0100;
 mod test {
     use super::*;
 
-    impl ClientData for i32 {}
-
     #[test]
     fn new_event_loop() {
-        let el = AeEventLoop::new();
-        assert!(el.file_event_head.is_none());
+        let el = AeEventLoop::new(1024);
+        assert_eq!(el.file_events.len(), 1024);
         assert!(el.time_event_head.is_none());
     }
 
-    #[test]
-    fn create_file_events() {
-        let mut el = AeEventLoop::new();
-        for i in 0..100 {
-            el.create_file_event(
-                Token(i),
-                i as i32,
-                default_ae_file_proc,
-                Box::new(3i32),
-                default_ae_event_finalizer_proc,
-            );
-            assert_eq!(el.file_event_head.as_mut().unwrap().mask, i as i32);
-        }
-        for i in (1..100).rev() {
-            el.delete_file_event(Token(i), i as i32);
-            assert_eq!(el.file_event_head.as_mut().unwrap().mask, (i - 1) as i32);
-        }
-    }
+//    #[test]
+//    fn create_file_events() {
+//        let mut el = AeEventLoop::new();
+//        for i in 0..100 {
+//            el.create_file_event(
+//                Token(i),
+//                i as i32,
+//                default_ae_file_proc,
+//                Box::new(3i32),
+//                default_ae_event_finalizer_proc,
+//            );
+//            assert_eq!(el.file_event_head.as_mut().unwrap().mask, i as i32);
+//        }
+//        for i in (1..100).rev() {
+//            el.delete_file_event(Token(i), i as i32);
+//            assert_eq!(el.file_event_head.as_mut().unwrap().mask, (i - 1) as i32);
+//        }
+//    }
 
     #[test]
     fn create_time_event() {
-        let mut el = AeEventLoop::new();
+        let mut el = AeEventLoop::new(1204);
         for i in 0..100 {
             el.create_time_event(
                 Duration::from_millis(500),
@@ -314,7 +394,7 @@ mod test {
 
     #[test]
     fn find_nearest() {
-        let mut el = AeEventLoop::new();
+        let mut el = AeEventLoop::new(1204);
         for i in 0..100 {
             el.create_time_event(
                 Duration::from_millis(500),

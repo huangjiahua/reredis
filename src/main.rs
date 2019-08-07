@@ -1,5 +1,8 @@
-use reredis::log::LogLevel;
-use reredis::env::{Env, REREDIS_VERSION};
+#[macro_use]
+extern crate log;
+extern crate env_logger;
+
+use reredis::env::{Env, REREDIS_VERSION, init_logger};
 use reredis::oom::oom;
 use std::process::exit;
 
@@ -14,37 +17,29 @@ fn main() {
         eprintln!("Usage: reredis-server [/path/to/reredis.conf]");
         exit(1);
     } else {
-        env.log(
-            LogLevel::Warning,
-            "no config file specified, using the default config. \
+        println!("no config file specified, using the default config. \
             In order to specify a config file use 'reredis-server \
-            /path/to/reredis.conf'",
-        );
+            /path/to/reredis.conf'");
     }
 
     env.init_server();
+    init_logger(env.server.verbosity);
 
     if env.server.daemonize {
         env.daemonize();
     }
 
-    env.log(
-        LogLevel::Notice,
-        &format!("Server started, Reredis version {}", REREDIS_VERSION),
-    );
+    info!("Server started, Reredis version {}", REREDIS_VERSION);
 
     if let Ok(_) = env.rdb_load() {
-        env.log(LogLevel::Notice, "DB loaded from disk");
+        info!("DB loaded from disk");
     }
 
     if let Err(_) = env.create_first_file_event() {
         oom("creating file event");
     }
 
-    env.log(
-        LogLevel::Notice,
-        &format!("The server is now ready to accept connections on port {}", env.server.port),
-    );
+    info!("The server is now ready to accept connections on port {}", env.server.port);
 
     env.ae_main();
 }

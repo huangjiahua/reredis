@@ -1,6 +1,9 @@
+#[macro_use]
+extern crate log;
+extern crate env_logger;
+
 pub mod object;
 pub mod hash;
-pub mod log;
 pub mod env;
 pub mod server;
 pub mod oom;
