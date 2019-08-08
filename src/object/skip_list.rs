@@ -482,7 +482,7 @@ mod test {
 
         let q = levels.iter().skip(6);
         for p in levels.iter().skip(5).zip(q) {
-            assert!(p.0 >= p.1);
+            assert!(*p.0 >= *p.1);
         }
     }
 
