@@ -7,11 +7,14 @@ use std::net::Shutdown::Read;
 use std::alloc::System;
 use std::rc::Rc;
 use mio::net::{TcpListener, TcpStream};
+use crate::server::Server;
+use std::cell::RefCell;
+use crate::client::Client;
 
-type AeTimeProc = fn(el: &mut AeEventLoop, id: i64, data: &Box<dyn ClientData>) -> i32;
-type AeFileProc = fn(el: &mut AeEventLoop, fd: &Fd, data: &Box<dyn ClientData>, mask: i32);
-type AeEventFinalizerProc = fn(el: &mut AeEventLoop, data: &Box<dyn ClientData>);
-pub type Fd = Rc<Fdp>;
+type AeTimeProc = fn(server: &mut Server, el: &mut AeEventLoop, id: i64, data: &ClientData) -> i32;
+type AeFileProc = fn(server: &mut Server, el: &mut AeEventLoop, fd: &Fd, data: &ClientData, mask: i32);
+type AeEventFinalizerProc = fn(el: &mut AeEventLoop, data: &ClientData);
+pub type Fd = Rc<RefCell<Fdp>>;
 
 pub enum Fdp {
     Listener(TcpListener),
@@ -53,13 +56,20 @@ impl Fdp {
             _ => panic!("not a stream"),
         }
     }
+
+    pub fn unwrap_stream_mut(&mut self) -> &mut TcpStream {
+        match self {
+            Fdp::Stream(s) => s,
+            _ => panic!("not a stream"),
+        }
+    }
 }
 
-fn default_ae_time_proc(el: &mut AeEventLoop, id: i64, data: &Box<dyn ClientData>) -> i32 { 1 }
+fn default_ae_time_proc(server: &mut Server, el: &mut AeEventLoop, id: i64, data: &ClientData) -> i32 { 1 }
 
-fn default_ae_file_proc(el: &mut AeEventLoop, token: Token, data: &Box<dyn ClientData>, mask: i32) {}
+fn default_ae_file_proc(server: &mut Server, el: &mut AeEventLoop, token: Token, data: &ClientData, mask: i32) {}
 
-pub fn default_ae_event_finalizer_proc(el: &mut AeEventLoop, data: &Box<dyn ClientData>) {}
+pub fn default_ae_event_finalizer_proc(el: &mut AeEventLoop, data: &ClientData) {}
 
 pub struct AeEventLoop {
     time_event_next_id: i64,
@@ -93,7 +103,7 @@ impl AeEventLoop {
         fd: Fd,
         mask: i32,
         file_proc: AeFileProc,
-        client_data: Box<dyn ClientData>,
+        client_data: ClientData,
         finalizer_proc: AeEventFinalizerProc,
     ) -> Result<(), ()> {
         let mut fe = AeFileEvent {
@@ -141,7 +151,7 @@ impl AeEventLoop {
         &mut self,
         duration: Duration,
         time_proc: AeTimeProc,
-        client_data: Box<dyn ClientData>,
+        client_data: ClientData,
         finalizer_proc: AeEventFinalizerProc,
     ) -> i64 {
         let id = self.time_event_next_id;
@@ -200,7 +210,7 @@ impl AeEventLoop {
         nearest
     }
 
-    fn process_events(&mut self, flags: i32) -> Result<usize, Box<dyn Error>> {
+    fn process_events(&mut self, flags: i32, server: &mut Server) -> Result<usize, Box<dyn Error>> {
         let mut num: usize = 0;
         let mut processed: usize = 0;
         // nothing to do, return ASAP
@@ -221,7 +231,7 @@ impl AeEventLoop {
                         ready |= Ready::writable();
                     }
                     poll.register(
-                        e.fd.as_ref().to_evented(),
+                        e.fd.as_ref().borrow().to_evented(),
                         Token(i),
                         ready,
                         PollOpt::edge(),
@@ -258,7 +268,7 @@ impl AeEventLoop {
                 let fe = self.file_events[t.0].take().unwrap();
                 self.occupy_file_event(t.0);
 
-                fe.file_proc.borrow()(self, &fe.fd, &fe.client_data, fe.mask);
+                fe.file_proc.borrow()(server, self, &fe.fd, &fe.client_data, fe.mask);
 
                 self.file_events[t.0] = Some(fe);
                 processed += 1;
@@ -266,21 +276,21 @@ impl AeEventLoop {
         }
 
         if flags & AE_TIME_EVENTS != 0 {
-            processed += self.process_time_events();
+            processed += self.process_time_events(server);
         }
 
         Ok(processed)
     }
 
-    fn process_time_events(&mut self) -> usize {
+    fn process_time_events(&mut self, server: &mut Server) -> usize {
 //        unimplemented!()
         0
     }
 
-    pub fn main(&mut self) {
+    pub fn main(&mut self, server: &mut Server) {
         self.stop = false;
         while !self.stop {
-            self.process_events(AE_ALL_EVENTS);
+            self.process_events(AE_ALL_EVENTS, server);
         }
     }
 }
@@ -290,7 +300,7 @@ struct AeFileEvent {
     mask: i32,
     file_proc: AeFileProc,
     finalizer_proc: AeEventFinalizerProc,
-    client_data: Box<dyn ClientData>,
+    client_data: ClientData,
 }
 
 struct AeTimeEvent {
@@ -298,7 +308,7 @@ struct AeTimeEvent {
     when: SystemTime,
     time_proc: AeTimeProc,
     finalizer_proc: AeEventFinalizerProc,
-    client_data: Box<dyn ClientData>,
+    client_data: ClientData,
     next: Option<Box<AeTimeEvent>>,
 }
 
@@ -315,7 +325,7 @@ fn ae_wait(fd: &Fd, mask: i32, duration: Duration) -> Result<i32, Box<dyn Error>
     }
     // TODO: exception?
 
-    poll.register(fd.as_ref().to_evented(), Token(0), ready, PollOpt::edge())?;
+    poll.register(fd.as_ref().borrow().to_evented(), Token(0), ready, PollOpt::edge())?;
     let mut events = Events::with_capacity(1);
 
     poll.poll(&mut events, Some(duration))?;
@@ -330,9 +340,10 @@ fn ae_wait(fd: &Fd, mask: i32, duration: Duration) -> Result<i32, Box<dyn Error>
     unreachable!()
 }
 
-pub trait ClientData {}
-
-impl ClientData for i32 {}
+pub enum ClientData {
+    Client(Rc<RefCell<Client>>),
+    Nil(),
+}
 
 pub const AE_READABLE: i32 = 0b0001;
 pub const AE_WRITABLE: i32 = 0b0010;
@@ -381,7 +392,7 @@ mod test {
             el.create_time_event(
                 Duration::from_millis(500),
                 default_ae_time_proc,
-                Box::new(1),
+                ClientData::Nil(),
                 default_ae_event_finalizer_proc,
             );
             assert_eq!(el.time_event_head.as_ref().unwrap().id, i);
@@ -399,7 +410,7 @@ mod test {
             el.create_time_event(
                 Duration::from_millis(500),
                 default_ae_time_proc,
-                Box::new(1),
+                ClientData::Nil(),
                 default_ae_event_finalizer_proc,
             );
             assert_eq!(el.time_event_head.as_ref().unwrap().id, i);
@@ -409,7 +420,7 @@ mod test {
         el.create_time_event(
             Duration::from_millis(500),
             default_ae_time_proc,
-            Box::new(1),
+            ClientData::Nil(),
             default_ae_event_finalizer_proc,
         );
     }

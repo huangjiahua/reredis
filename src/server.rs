@@ -4,27 +4,16 @@ use crate::ae::*;
 use mio::net::TcpListener;
 use std::rc::Rc;
 use std::error::Error;
-
-pub fn accept_handler(el: &mut AeEventLoop, fd: &Fd, data: &Box<dyn ClientData>, mask: i32) {
-    let listener = fd.unwrap_listener();
-
-    debug!("ready to accept");
-    let r = listener.accept();
-
-    let (stream, info) = match r {
-        Ok(p) => p,
-        Err(e) => {
-            debug!("Accepting client connection: {}", e.description());
-            return;
-        }
-    };
-    debug!("Accepted {}:{}", info.ip(), info.port());
-}
+use std::collections::VecDeque;
+use std::cell::RefCell;
+use crate::client::Client;
 
 
 pub struct Server {
+    pub stat_num_connections: usize,
+    pub max_clients: usize,
+    pub clients: VecDeque<Rc<RefCell<Client>>>,
     pub fd: Fd,
-    pub el: AeEventLoop,
     // port
     pub port: u16,
     // min log level
@@ -40,10 +29,12 @@ impl Server {
         // TODO: change this
         let addr = "127.0.0.1:6379".parse().unwrap();
         let server = TcpListener::bind(&addr).unwrap();
-        let fd = Rc::new(Fdp::Listener(server));
+        let fd = Rc::new(RefCell::new(Fdp::Listener(server)));
         Server {
+            stat_num_connections: 0,
+            max_clients: 100,
+            clients: VecDeque::new(),
             fd,
-            el: AeEventLoop::new(1024),
             port: 6379,
             verbosity: LevelFilter::Debug,
             log_file: None,
