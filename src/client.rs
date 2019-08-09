@@ -1,4 +1,4 @@
-use crate::ae::{Fd, AeEventLoop, AE_READABLE, default_ae_event_finalizer_proc, ClientData};
+use crate::ae::*;
 use std::time::SystemTime;
 use std::rc::Rc;
 use crate::env::read_query_from_client;
@@ -31,4 +31,23 @@ impl Client {
     }
 }
 
+pub enum ClientData {
+    Client(Rc<RefCell<Client>>),
+    Nil(),
+}
 
+impl ClientData {
+    pub fn unwrap_client(&self) -> &Rc<RefCell<Client>> {
+        match self {
+            ClientData::Client(c) => c,
+            _ => panic!("not a client"),
+        }
+    }
+
+    pub fn is_client(&self) -> bool {
+        match self {
+            ClientData::Client(_) => true,
+            _ => false,
+        }
+    }
+}

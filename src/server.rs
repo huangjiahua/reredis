@@ -4,7 +4,6 @@ use crate::ae::*;
 use mio::net::TcpListener;
 use std::rc::Rc;
 use std::error::Error;
-use std::collections::VecDeque;
 use std::cell::RefCell;
 use crate::client::Client;
 
@@ -12,7 +11,7 @@ use crate::client::Client;
 pub struct Server {
     pub stat_num_connections: usize,
     pub max_clients: usize,
-    pub clients: VecDeque<Rc<RefCell<Client>>>,
+    pub clients: Vec<Rc<RefCell<Client>>>,
     pub fd: Fd,
     // port
     pub port: u16,
@@ -33,12 +32,21 @@ impl Server {
         Server {
             stat_num_connections: 0,
             max_clients: 100,
-            clients: VecDeque::new(),
+            clients: Vec::new(),
             fd,
             port: 6379,
             verbosity: LevelFilter::Debug,
             log_file: None,
             daemonize: false,
+        }
+    }
+
+    pub fn free_client(&mut self, c: &Rc<RefCell<Client>>) {
+        for i in 0..self.clients.len() {
+            if Rc::ptr_eq(&c, &self.clients[i]) {
+                self.clients.remove(i);
+                return;
+            }
         }
     }
 }

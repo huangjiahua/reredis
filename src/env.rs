@@ -1,13 +1,14 @@
 use crate::server::Server;
 use std::borrow::{BorrowMut, Borrow};
 use std::error::Error;
-use crate::ae::{AE_READABLE, default_ae_event_finalizer_proc, AeEventLoop, Fd, ClientData, Fdp};
+use crate::ae::{AE_READABLE, default_ae_event_finalizer_proc, AeEventLoop, Fd, Fdp};
 use std::rc::Rc;
 use chrono::Local;
-use std::io::Write;
+use std::io::{Write, Read, ErrorKind};
 use log::{LevelFilter, Level};
 use std::cell::RefCell;
-use crate::client::Client;
+use crate::client::*;
+use mio::net::TcpStream;
 
 pub const REREDIS_VERSION: &str = "0.0.1";
 
@@ -125,11 +126,59 @@ pub fn accept_handler(
     server.stat_num_connections += 1;
 }
 
+fn free_client_occupied_in_el(
+    server: &mut Server,
+    el: &mut AeEventLoop,
+    client_ptr: &Rc<RefCell<Client>>,
+    stream: &TcpStream,
+) {
+    server.free_client(&client_ptr);
+    el.try_delete_occupied();
+    el.deregister_stream(stream);
+}
+
 pub fn read_query_from_client(
     server: &mut Server,
     el: &mut AeEventLoop,
     fd: &Fd,
     data: &ClientData,
     mask: i32) {
-    unimplemented!()
+    let client_ptr = Rc::clone(data.unwrap_client());
+    let mut fd_ref = fd.as_ref().borrow_mut();
+    let stream = fd_ref.unwrap_stream_mut();
+    let mut buf = [0u8; 1024];
+
+    let r = stream.read(&mut buf);
+    let nread: usize = match r {
+        Err(err) => {
+            match err.kind() {
+                ErrorKind::Interrupted => 0,
+                _ => {
+                    debug!("Reading from client: {}", err.description());
+                    free_client_occupied_in_el(server, el, &client_ptr, stream);
+                    return;
+                }
+            }
+        }
+        Ok(n) => {
+            match n {
+                0 => {
+                    debug!("Client closed connection");
+                    free_client_occupied_in_el(server, el, &client_ptr, stream);
+                    return;
+                }
+                _ => n,
+            }
+        }
+    };
+
+    if nread > 0 {
+        client_ptr.as_ref()
+            .borrow_mut()
+            .query_buf
+            .extend_from_slice(&buf[..nread]);
+        stream.write(&buf[..nread]);
+    } else {
+        return;
+    }
 }

@@ -3,13 +3,12 @@ use std::borrow::Borrow;
 use std::time::{SystemTime, Duration};
 use std::ops::Add;
 use std::error::Error;
-use std::net::Shutdown::Read;
 use std::alloc::System;
 use std::rc::Rc;
 use mio::net::{TcpListener, TcpStream};
 use crate::server::Server;
 use std::cell::RefCell;
-use crate::client::Client;
+use crate::client::*;
 
 type AeTimeProc = fn(server: &mut Server, el: &mut AeEventLoop, id: i64, data: &ClientData) -> i32;
 type AeFileProc = fn(server: &mut Server, el: &mut AeEventLoop, fd: &Fd, data: &ClientData, mask: i32);
@@ -76,6 +75,7 @@ pub struct AeEventLoop {
     file_events: Vec<Option<AeFileEvent>>,
     occupied: Option<usize>,
     time_event_head: Option<Box<AeTimeEvent>>,
+    poll: Poll,
     stop: bool,
 }
 
@@ -86,12 +86,17 @@ impl AeEventLoop {
             file_events: Vec::with_capacity(n),
             occupied: None,
             time_event_head: None,
+            poll: Poll::new().unwrap(),
             stop: false,
         };
         for i in 0..n {
             el.file_events.push(None);
         }
         el
+    }
+
+    pub fn deregister_stream(&mut self, stream: &TcpStream) {
+        self.poll.deregister(stream);
     }
 
     pub fn stop(&mut self) {
@@ -108,6 +113,7 @@ impl AeEventLoop {
     ) -> Result<(), ()> {
         let mut fe = AeFileEvent {
             fd,
+            is_register: false,
             mask,
             file_proc,
             finalizer_proc,
@@ -125,11 +131,25 @@ impl AeEventLoop {
         Err(())
     }
 
-    fn occupy_file_event(&mut self, i: usize) {
+    fn occupy_file_event(&mut self, i: usize) -> AeFileEvent {
         self.occupied = Some(i);
+        self.file_events[i].take().unwrap()
     }
 
-    fn delete_file_event(&mut self, fd: &Fd, mask: i32) {
+    fn un_occupy_file_event(&mut self, i: usize, fe: AeFileEvent) {
+        if let Some(n) = self.occupied {
+            assert_eq!(n, i);
+            self.file_events[i] = Some(fe);
+        }
+        // else drop the fe
+    }
+
+    pub fn try_delete_occupied(&mut self) {
+        assert!(self.occupied.is_some());
+        self.occupied = None;
+    }
+
+    pub fn delete_file_event(&mut self, fd: &Fd, mask: i32) {
         let mut del: Option<usize> = None;
         for i in 0..self.file_events.len() {
             let p = self.file_events[i]
@@ -218,11 +238,12 @@ impl AeEventLoop {
             return Ok(0);
         }
 
-        let poll = Poll::new()?;
+        let poll = &self.poll;
 
         if flags & AE_FILE_EVENTS != 0 {
             for i in 0..self.file_events.len() {
-                if let Some(e) = self.file_events[i].as_ref() {
+                if let Some(e) = self.file_events[i].as_mut() {
+                    num += 1;
                     let mut ready: Ready = Ready::empty();
                     if e.mask & AE_READABLE != 0 {
                         ready |= Ready::readable();
@@ -230,13 +251,22 @@ impl AeEventLoop {
                     if e.mask & AE_WRITABLE != 0 {
                         ready |= Ready::writable();
                     }
-                    poll.register(
-                        e.fd.as_ref().borrow().to_evented(),
-                        Token(i),
-                        ready,
-                        PollOpt::edge(),
-                    )?;
-                    num += 1;
+                    if e.is_register {
+                        poll.reregister(
+                            e.fd.as_ref().borrow().to_evented(),
+                            Token(i),
+                            ready,
+                            PollOpt::edge(),
+                        )?;
+                    } else {
+                        poll.register(
+                            e.fd.as_ref().borrow().to_evented(),
+                            Token(i),
+                            ready,
+                            PollOpt::edge(),
+                        )?;
+                    }
+                    e.is_register = true;
                 }
             }
         }
@@ -261,16 +291,15 @@ impl AeEventLoop {
                 }
             }
 
-            let mut events = Events::with_capacity(num);
+            let mut events = Events::with_capacity(num + 2);
             let event_num = poll.poll(&mut events, wait)?;
             for event in &events {
                 let t = event.token();
-                let fe = self.file_events[t.0].take().unwrap();
-                self.occupy_file_event(t.0);
 
+                let fe = self.occupy_file_event(t.0);
                 fe.file_proc.borrow()(server, self, &fe.fd, &fe.client_data, fe.mask);
+                self.un_occupy_file_event(t.0, fe);
 
-                self.file_events[t.0] = Some(fe);
                 processed += 1;
             }
         }
@@ -290,13 +319,17 @@ impl AeEventLoop {
     pub fn main(&mut self, server: &mut Server) {
         self.stop = false;
         while !self.stop {
-            self.process_events(AE_ALL_EVENTS, server);
+            let r = self.process_events(AE_ALL_EVENTS, server);
+            if let Err(e) = r {
+                debug!("Processing events: {}", e.description());
+            }
         }
     }
 }
 
 struct AeFileEvent {
     fd: Fd,
+    is_register: bool,
     mask: i32,
     file_proc: AeFileProc,
     finalizer_proc: AeEventFinalizerProc,
@@ -340,10 +373,6 @@ fn ae_wait(fd: &Fd, mask: i32, duration: Duration) -> Result<i32, Box<dyn Error>
     unreachable!()
 }
 
-pub enum ClientData {
-    Client(Rc<RefCell<Client>>),
-    Nil(),
-}
 
 pub const AE_READABLE: i32 = 0b0001;
 pub const AE_WRITABLE: i32 = 0b0010;
