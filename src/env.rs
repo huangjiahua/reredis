@@ -42,14 +42,14 @@ impl Env {
         Ok(())
     }
 
-    pub fn create_first_file_event(&mut self) -> Result<(), Box<dyn Error>> {
+    pub fn create_first_file_event(&mut self) -> Result<(), ()> {
         self.el.create_file_event(
             Rc::clone(&self.server.fd),
             AE_READABLE,
             accept_handler,
             ClientData::Nil(),
             default_ae_event_finalizer_proc,
-        );
+        )?;
         Ok(())
     }
 
@@ -120,7 +120,8 @@ pub fn accept_handler(
         let c = c.as_ref().borrow_mut();
         let mut fd = c.fd.as_ref().borrow_mut();
         let w = fd.unwrap_stream_mut();
-        write!(w, "-ERR max number of clients reached");
+        // this is a best-effort message, so the result is ignored
+        let _ = write!(w, "-ERR max number of clients reached");
         return;
     }
     server.stat_num_connections += 1;
@@ -177,7 +178,7 @@ pub fn read_query_from_client(
             .borrow_mut()
             .query_buf
             .extend_from_slice(&buf[..nread]);
-        stream.write(&buf[..nread]);
+        let _ = stream.write(&buf[..nread]); // for debug only
     } else {
         return;
     }
