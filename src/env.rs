@@ -9,6 +9,7 @@ use log::{LevelFilter, Level};
 use std::cell::RefCell;
 use crate::client::*;
 use mio::net::TcpStream;
+use std::time::Duration;
 
 pub const REREDIS_VERSION: &str = "0.0.1";
 
@@ -34,7 +35,12 @@ impl Env {
     pub fn daemonize(&mut self) {}
 
     pub fn init_server(&mut self) {
-//        unimplemented!()
+        self.el.create_time_event(
+            Duration::from_millis(1000),
+            server_cron,
+            ClientData::Nil(),
+            default_ae_event_finalizer_proc,
+        );
     }
 
     pub fn rdb_load(&mut self) -> Result<(), Box<dyn Error>> {
@@ -182,4 +188,14 @@ pub fn read_query_from_client(
     } else {
         return;
     }
+}
+
+pub fn server_cron(
+    server: &mut Server,
+    el: &mut AeEventLoop,
+    id: i64,
+    data: &ClientData,
+) -> i32 {
+    debug!("Executing server_cron");
+    1000
 }

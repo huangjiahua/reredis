@@ -10,6 +10,7 @@ use crate::server::Server;
 use std::cell::RefCell;
 use crate::client::*;
 use std::net::Shutdown::Read;
+use std::collections::VecDeque;
 
 type AeTimeProc = fn(server: &mut Server, el: &mut AeEventLoop, id: i64, data: &ClientData) -> i32;
 type AeFileProc = fn(server: &mut Server, el: &mut AeEventLoop, fd: &Fd, data: &ClientData, mask: i32);
@@ -76,7 +77,7 @@ pub struct AeEventLoop {
     file_events: Vec<Option<AeFileEvent>>,
     file_events_num: usize,
     occupied: Option<usize>,
-    time_event_head: Option<Box<AeTimeEvent>>,
+    time_events: VecDeque<AeTimeEvent>,
     poll: Poll,
     stop: bool,
 }
@@ -88,7 +89,7 @@ impl AeEventLoop {
             file_events: Vec::with_capacity(n),
             file_events_num: 0,
             occupied: None,
-            time_event_head: None,
+            time_events: VecDeque::new(),
             poll: Poll::new().unwrap(),
             stop: false,
         };
@@ -189,7 +190,7 @@ impl AeEventLoop {
         }
     }
 
-    fn create_time_event(
+    pub fn create_time_event(
         &mut self,
         duration: Duration,
         time_proc: AeTimeProc,
@@ -206,47 +207,32 @@ impl AeEventLoop {
             finalizer_proc,
             next: None,
         };
-        te.next = self.time_event_head.take();
-        self.time_event_head = Some(Box::new(te));
+        self.time_events.push_back(te);
         id
     }
 
     fn delete_time_event(&mut self, id: i64) {
-        let mut prev: Option<&mut Box<AeTimeEvent>> = None;
-        let mut fe = self.time_event_head.take();
-
-        while let Some(mut e) = fe {
-            if e.id == id {
-                match prev {
-                    None => self.time_event_head = e.next.take(),
-                    Some(k) => k.next = e.next.take(),
-                }
-                e.finalizer_proc.borrow()(self, &e.client_data);
-                break;
-            }
-            fe = e.next.take();
-            match prev {
-                None => {
-                    self.time_event_head = Some(e);
-                    prev = self.time_event_head.as_mut();
-                }
-                Some(k) => {
-                    k.next = Some(e);
-                    prev = k.next.as_mut();
-                }
+        for i in 0..self.time_events.len() {
+            if self.time_events[i].id == id {
+                self.time_events.remove(i);
             }
         }
     }
 
-    fn search_nearest_timer(&self) -> Option<&Box<AeTimeEvent>> {
-        let mut te = self.time_event_head.as_ref();
-        let mut nearest: Option<&Box<AeTimeEvent>> = None;
+    fn search_nearest_timer(&self) -> Option<&AeTimeEvent> {
+        let mut nearest: Option<&AeTimeEvent> = None;
 
-        while let Some(e) = te {
-            if nearest.is_none() || e.when < nearest.unwrap().when {
-                nearest = Some(e);
+        for te in &self.time_events {
+            nearest = match nearest {
+                None => Some(te),
+                Some(e) => {
+                    if te.when < e.when {
+                        Some(te)
+                    } else {
+                        Some(e)
+                    }
+                }
             }
-            te = e.next.as_ref();
         }
 
         nearest
@@ -302,8 +288,22 @@ impl AeEventLoop {
     }
 
     fn process_time_events(&mut self, server: &mut Server) -> usize {
-//        unimplemented!()
-        0
+        let num = self.time_events.len();
+        for _ in 0..num {
+            assert!(!self.time_events.is_empty());
+            let curr = SystemTime::now();
+            let mut te = self.time_events.pop_front().unwrap();
+            if curr > te.when {
+                let id = te.id;
+                let retval
+                    = te.time_proc.borrow()(server, self, id, &te.client_data);
+                if retval != -1 {
+                    te.when = te.when.add(Duration::from_millis(retval as u64));
+                }
+            }
+            self.time_events.push_back(te);
+        }
+        1
     }
 
     pub fn main(&mut self, server: &mut Server) {
@@ -381,65 +381,7 @@ mod test {
     fn new_event_loop() {
         let el = AeEventLoop::new(1024);
         assert_eq!(el.file_events.len(), 1024);
-        assert!(el.time_event_head.is_none());
+        assert_eq!(el.time_events.len(), 0);
     }
 
-//    #[test]
-//    fn create_file_events() {
-//        let mut el = AeEventLoop::new();
-//        for i in 0..100 {
-//            el.create_file_event(
-//                Token(i),
-//                i as i32,
-//                default_ae_file_proc,
-//                Box::new(3i32),
-//                default_ae_event_finalizer_proc,
-//            );
-//            assert_eq!(el.file_event_head.as_mut().unwrap().mask, i as i32);
-//        }
-//        for i in (1..100).rev() {
-//            el.delete_file_event(Token(i), i as i32);
-//            assert_eq!(el.file_event_head.as_mut().unwrap().mask, (i - 1) as i32);
-//        }
-//    }
-
-    #[test]
-    fn create_time_event() {
-        let mut el = AeEventLoop::new(1204);
-        for i in 0..100 {
-            el.create_time_event(
-                Duration::from_millis(500),
-                default_ae_time_proc,
-                ClientData::Nil(),
-                default_ae_event_finalizer_proc,
-            );
-            assert_eq!(el.time_event_head.as_ref().unwrap().id, i);
-        }
-        for i in (1..100).rev() {
-            el.delete_time_event(i);
-            assert_eq!(el.time_event_head.as_ref().unwrap().id, i - 1);
-        }
-    }
-
-    #[test]
-    fn find_nearest() {
-        let mut el = AeEventLoop::new(1204);
-        for i in 0..100 {
-            el.create_time_event(
-                Duration::from_millis(500),
-                default_ae_time_proc,
-                ClientData::Nil(),
-                default_ae_event_finalizer_proc,
-            );
-            assert_eq!(el.time_event_head.as_ref().unwrap().id, i);
-        }
-        let n = el.search_nearest_timer().unwrap();
-        assert_eq!(n.id, 0);
-        el.create_time_event(
-            Duration::from_millis(500),
-            default_ae_time_proc,
-            ClientData::Nil(),
-            default_ae_event_finalizer_proc,
-        );
-    }
 }
