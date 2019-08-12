@@ -9,6 +9,7 @@ pub struct Client {
     pub dict_id: usize,
     pub query_buf: Vec<u8>,
     pub last_interaction: SystemTime,
+    pub bulk_len: Option<usize>,
 }
 
 impl Client {
@@ -18,6 +19,7 @@ impl Client {
             dict_id: 0,
             query_buf: vec![],
             last_interaction: SystemTime::now(),
+            bulk_len: None,
         }));
         el.create_file_event(
             Rc::clone(&client.borrow().fd),

@@ -12,6 +12,7 @@ use mio::net::TcpStream;
 use std::time::Duration;
 
 pub const REREDIS_VERSION: &str = "0.0.1";
+pub const REREDIS_REQUEST_MAX_SIZE: usize = 1024 * 1024 * 256;
 
 pub struct Env {
     pub server: Server,
@@ -184,9 +185,28 @@ pub fn read_query_from_client(
             .borrow_mut()
             .query_buf
             .extend_from_slice(&buf[..nread]);
+        // TODO: delete this
         let _ = stream.write(&buf[..nread]); // for debug only
     } else {
         return;
+    }
+
+    let client = client_ptr.as_ref().borrow();
+
+    if let Some(bulk_len) = client.bulk_len {
+        unimplemented!()
+    } else {
+        let p = client.query_buf
+            .iter()
+            .enumerate()
+            .find(|x| *x.1 == '\n' as u8)
+            .map(|x| *x.1);
+
+        if let Some(p) = p {} else if client.query_buf.len() > REREDIS_REQUEST_MAX_SIZE {
+            debug!("Client protocol error");
+            free_client_occupied_in_el(server, el, &client_ptr, stream);
+            return;
+        }
     }
 }
 
