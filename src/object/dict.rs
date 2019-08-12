@@ -145,6 +145,10 @@ impl<K, V> Dict<K, V>
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.ht[0].used + self.ht[1].used
+    }
+
     pub fn find(&self, key: &K) -> Option<(&K, &V)> {
         if self.ht[0].size == 0 {
             return None;
