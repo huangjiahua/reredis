@@ -3,6 +3,9 @@ use std::time::SystemTime;
 use std::rc::Rc;
 use crate::env::read_query_from_client;
 use std::cell::RefCell;
+use crate::object::{Sds, RobjPtr};
+use std::error::Error;
+use std::fmt::Display;
 
 pub struct Client {
     pub fd: Fd,
@@ -10,6 +13,7 @@ pub struct Client {
     pub query_buf: Vec<u8>,
     pub last_interaction: SystemTime,
     pub bulk_len: Option<usize>,
+    pub argv: Vec<RobjPtr>,
 }
 
 impl Client {
@@ -20,6 +24,7 @@ impl Client {
             query_buf: vec![],
             last_interaction: SystemTime::now(),
             bulk_len: None,
+            argv: vec![],
         }));
         el.create_file_event(
             Rc::clone(&client.borrow().fd),
@@ -30,6 +35,10 @@ impl Client {
         )?;
 
         Ok(client)
+    }
+
+    pub fn parse_query_buf(&mut self) -> Result<(), CommandError> {
+        Ok(())
     }
 }
 
@@ -50,6 +59,19 @@ impl ClientData {
         match self {
             ClientData::Client(_) => true,
             _ => false,
+        }
+    }
+}
+
+pub enum CommandError {
+    Malformed,
+}
+
+impl CommandError {
+    pub fn description(&self) -> &'static str {
+        match self {
+            CommandError::Malformed => "Client protocol error",
+            _ => "",
         }
     }
 }

@@ -186,12 +186,13 @@ pub fn read_query_from_client(
             .query_buf
             .extend_from_slice(&buf[..nread]);
         // TODO: delete this
-        let _ = stream.write(&buf[..nread]); // for debug only
+        debug!("Received: {}", std::str::from_utf8(&buf[..nread]).unwrap());
+        let _ = stream.write("+OK\r\n".as_bytes()); // for debug only
     } else {
         return;
     }
 
-    let client = client_ptr.as_ref().borrow();
+    let mut client = client_ptr.as_ref().borrow_mut();
 
     if let Some(bulk_len) = client.bulk_len {
         unimplemented!()
@@ -202,7 +203,11 @@ pub fn read_query_from_client(
             .find(|x| *x.1 == '\n' as u8)
             .map(|x| *x.1);
 
-        if let Some(p) = p {} else if client.query_buf.len() > REREDIS_REQUEST_MAX_SIZE {
+        if let Some(p) = p {
+            if let Err(e) = client.parse_query_buf() {
+                debug!("{}", e.description());
+            }
+        } else if client.query_buf.len() > REREDIS_REQUEST_MAX_SIZE {
             debug!("Client protocol error");
             free_client_occupied_in_el(server, el, &client_ptr, stream);
             return;

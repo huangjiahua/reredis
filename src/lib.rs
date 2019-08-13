@@ -10,3 +10,4 @@ pub mod client;
 pub mod oom;
 pub mod ae;
 pub mod db;
+pub mod protocol;
