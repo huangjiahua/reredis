@@ -502,6 +502,7 @@ mod test {
     }
 
     #[test]
+    #[ignore]
     fn get_first_in_range() {
         let mut list = SkipList::new();
         let o1 = Robj::create_string_object("foo");
