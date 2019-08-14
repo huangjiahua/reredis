@@ -194,23 +194,37 @@ pub fn read_query_from_client(
 
     let mut client = client_ptr.as_ref().borrow_mut();
 
-    if let Some(bulk_len) = client.bulk_len {
-        unimplemented!()
-    } else {
-        let p = client.query_buf
-            .iter()
-            .enumerate()
-            .find(|x| *x.1 == '\n' as u8)
-            .map(|x| *x.1);
+    loop {
+        if let Some(bulk_len) = client.bulk_len {
+            unimplemented!()
+        } else {
+            let p = client.query_buf
+                .iter()
+                .enumerate()
+                .find(|x| *x.1 == '\n' as u8)
+                .map(|x| *x.1);
 
-        if let Some(p) = p {
-            if let Err(e) = client.parse_query_buf() {
-                debug!("{}", e.description());
+            if let Some(p) = p {
+                if let Err(e) = client.parse_query_buf() {
+                    debug!("{}", e.description());
+                    free_client_occupied_in_el(server, el, &client_ptr, stream);
+                    return;
+                }
+                if client.argc() > 0 {
+                    if let Err(e) = client.process_command(stream, server, el) {
+                        debug!("{}", e.description());
+                        free_client_occupied_in_el(server, el, &client_ptr, stream);
+                        return;
+                    }
+                    if client.query_buf.is_empty() {
+                        return;
+                    }
+                }
+            } else if client.query_buf.len() > REREDIS_REQUEST_MAX_SIZE {
+                debug!("Client protocol error");
+                free_client_occupied_in_el(server, el, &client_ptr, stream);
+                return;
             }
-        } else if client.query_buf.len() > REREDIS_REQUEST_MAX_SIZE {
-            debug!("Client protocol error");
-            free_client_occupied_in_el(server, el, &client_ptr, stream);
-            return;
         }
     }
 }
