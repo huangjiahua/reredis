@@ -213,6 +213,7 @@ pub fn read_query_from_client(
                 if client.argc() > 0 {
                     if let Err(e) = client.process_command(stream, server, el) {
                         debug!("{}", e.description());
+                        // TODO: free according to err type
                         free_client_occupied_in_el(server, el, &client_ptr, stream);
                         return;
                     }
