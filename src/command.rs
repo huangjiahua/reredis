@@ -1,6 +1,7 @@
 use crate::client::Client;
 use crate::server::Server;
 use crate::ae::AeEventLoop;
+use std::rc::Rc;
 
 type CommandProc = fn(
     client: &mut Client,
@@ -26,6 +27,21 @@ pub fn get_command(
     el: &mut AeEventLoop,
 ) {
     debug!("use the get_command proc");
+    let r = server.db[client.db_idx].look_up_key_read(
+        &client.argv[1],
+    );
+
+    match r {
+        None => client.add_str_reply("$-1\r\n"),
+        Some(s) => {
+            let b = format!(
+                "${}\r\n{}\r\n",
+                s.borrow().string().len(),
+                s.borrow().string()
+            );
+            client.add_str_reply(&b);
+        }
+    }
 }
 
 pub fn set_command(
@@ -34,6 +50,37 @@ pub fn set_command(
     el: &mut AeEventLoop,
 ) {
     debug!("use the set_command proc");
+    set_generic_command(client, server, el, 0);
+}
+
+fn set_generic_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+    nx: usize,
+) {
+    let db = &mut server.db[client.db_idx];
+    let r = db.dict.add(
+        Rc::clone(&client.argv[1]),
+        Rc::clone(&client.argv[2]),
+    );
+
+    if r.is_err() {
+        if nx == 0 {
+            db.dict.replace(
+                Rc::clone(&client.argv[1]),
+                Rc::clone(&client.argv[2]),
+            );
+        } else {
+            // TODO: shared object
+            client.add_str_reply(":0\r\n");
+            return;
+        }
+    }
+
+    server.dirty += 1;
+    db.remove_expire(&client.argv[1]);
+    client.add_str_reply("+OK\r\n");
 }
 
 

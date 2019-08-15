@@ -6,12 +6,12 @@ use std::rc::Rc;
 use std::error::Error;
 use std::cell::RefCell;
 use crate::client::Client;
+use crate::db::DB;
 
 
 pub struct Server {
     pub stat_num_connections: usize,
     pub stat_num_commands: usize,
-
 
     pub max_clients: usize,
     pub clients: Vec<Rc<RefCell<Client>>>,
@@ -24,6 +24,9 @@ pub struct Server {
     pub log_file: Option<File>,
     // whether server run as a daemon
     pub daemonize: bool,
+
+    pub dirty: usize,
+    pub db: Vec<DB>,
 }
 
 impl Server {
@@ -32,6 +35,12 @@ impl Server {
         let addr = "127.0.0.1:6379".parse().unwrap();
         let server = TcpListener::bind(&addr).unwrap();
         let fd = Rc::new(RefCell::new(Fdp::Listener(server)));
+
+        let mut db: Vec<DB> = Vec::with_capacity(12);
+        for i in 0..12 {
+            db.push(DB::new(i));
+        }
+
         Server {
             stat_num_connections: 0,
             stat_num_commands: 0,
@@ -42,6 +51,8 @@ impl Server {
             verbosity: LevelFilter::Debug,
             log_file: None,
             daemonize: false,
+            dirty: 0,
+            db,
         }
     }
 

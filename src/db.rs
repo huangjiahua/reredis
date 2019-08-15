@@ -4,8 +4,9 @@ use crate::hash::string_object_hash;
 use rand::Rng;
 use std::time::SystemTime;
 use mio::Ready;
+use std::rc::Rc;
 
-struct DB {
+pub struct DB {
     pub id: usize,
     pub dict: Dict<RobjPtr, RobjPtr>,
     pub expires: Dict<RobjPtr, SystemTime>,
@@ -59,7 +60,7 @@ impl DB {
 
     pub fn delete(&mut self, key: &RobjPtr) -> Result<(), ()> {
         if self.expires.len() == 0 {
-            return Err(())
+            return Err(());
         }
 
         let _ = self.expires.delete(key)?;
@@ -67,17 +68,18 @@ impl DB {
         Ok(())
     }
 
-//    pub fn add(&mut self, key: RobjPtr, value: RobjPtr) {
-//        self.dict.add(key, value).unwrap();
-//    }
-//
-//    pub fn look_up(&mut self, key: &RobjPtr) -> Option<&RobjPtr> {
-//        let r = self.dict.find(key);
-//        match r {
-//            None => None,
-//            Some((_, obj)) => Some(obj),
-//        }
-//    }
+    pub fn look_up_key_read(&mut self, key: &RobjPtr) -> Option<RobjPtr> {
+        let _ = self.expire_if_needed(key);
+        self.look_up_key(key)
+    }
+
+    pub fn look_up_key(&mut self, key: &RobjPtr) -> Option<RobjPtr> {
+        let e = self.dict.find_by_mut(key);
+        match e {
+            None => None,
+            Some((_, r)) => Some(Rc::clone(r)),
+        }
+    }
 }
 
 #[cfg(test)]

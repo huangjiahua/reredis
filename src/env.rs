@@ -258,9 +258,10 @@ pub fn send_reply_to_client(
     debug!("ready to reply");
 
     if client.reply.len() > 1 {
-        let start = format!("${}\r\n", client.reply.len());
+        let start = format!("*{}\r\n", client.reply.len());
         match stream.write(start.as_bytes()) {
             Err(e) => if e.kind() != ErrorKind::Interrupted {
+                debug!("Error writing to client: {}", e.description());
                 free_client_occupied_in_el(server, el, data.unwrap_client(), stream);
                 return;
             }
@@ -272,6 +273,7 @@ pub fn send_reply_to_client(
         .map(|x| x.as_ref()) {
         match stream.write(rep.borrow().string().as_bytes()) {
             Err(e) => if e.kind() != ErrorKind::Interrupted {
+                debug!("Error writing to client: {}", e.description());
                 free_client_occupied_in_el(server, el, data.unwrap_client(), stream);
                 return;
             }

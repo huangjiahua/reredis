@@ -39,6 +39,8 @@ pub struct Client {
 
     pub reply_state: ReplyState,
     pub reply: Vec<RobjPtr>,
+
+    pub db_idx: usize,
 }
 
 impl Client {
@@ -53,6 +55,7 @@ impl Client {
             argv: vec![],
             reply_state: ReplyState::None,
             reply: vec![],
+            db_idx: 0,
         }));
         el.create_file_event(
             Rc::clone(&client.as_ref().borrow().fd),
@@ -102,7 +105,7 @@ impl Client {
         );
         let cmd = match cmd {
             None => {
-                self.add_str_reply("-Error unknown command\r\n", server, el);
+                self.add_str_reply("-Error unknown command\r\n");
                 self.reset();
                 return Err(CommandError::Unknown);
             }
@@ -111,7 +114,7 @@ impl Client {
 
         if (cmd.arity > 0 && cmd.arity as usize != self.argc())
             || (cmd.arity < 0 && (self.argc() < (-cmd.arity) as usize)) {
-            self.add_str_reply("-Error wrong number of arguments\r\n", server, el);
+            self.add_str_reply("-Error wrong number of arguments\r\n");
             self.reset();
             return Err(CommandError::WrongNumber);
             // TODO: max memory
@@ -146,15 +149,13 @@ impl Client {
         self.bulk_len = None;
     }
 
-    pub fn add_reply(&mut self, r: RobjPtr, server: &Server, el: &mut AeEventLoop) {
+    pub fn add_reply(&mut self, r: RobjPtr) {
         self.reply.push(r);
     }
 
-    pub fn add_str_reply(&mut self, s: &str, server: &Server, el: &mut AeEventLoop) {
+    pub fn add_str_reply(&mut self, s: &str) {
         self.add_reply(
             Robj::create_string_object(s),
-            server,
-            el,
         );
     }
 }
