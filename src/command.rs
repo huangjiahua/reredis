@@ -1,11 +1,9 @@
 use crate::client::Client;
-use mio::net::TcpStream;
 use crate::server::Server;
 use crate::ae::AeEventLoop;
 
 type CommandProc = fn(
     client: &mut Client,
-    stream: &mut TcpStream,
     server: &mut Server,
     el: &mut AeEventLoop,
 );
@@ -24,7 +22,6 @@ pub struct Command {
 
 pub fn get_command(
     client: &mut Client,
-    stream: &mut TcpStream,
     server: &mut Server,
     el: &mut AeEventLoop,
 ) {
@@ -33,7 +30,6 @@ pub fn get_command(
 
 pub fn set_command(
     client: &mut Client,
-    stream: &mut TcpStream,
     server: &mut Server,
     el: &mut AeEventLoop,
 ) {

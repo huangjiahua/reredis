@@ -1,7 +1,7 @@
 use crate::server::Server;
 use std::borrow::{BorrowMut, Borrow};
 use std::error::Error;
-use crate::ae::{AE_READABLE, default_ae_event_finalizer_proc, AeEventLoop, Fd, Fdp};
+use crate::ae::{AE_READABLE, default_ae_event_finalizer_proc, AeEventLoop, Fd, Fdp, default_ae_file_proc};
 use std::rc::Rc;
 use chrono::Local;
 use std::io::{Write, Read, ErrorKind};
@@ -54,6 +54,7 @@ impl Env {
             Rc::clone(&self.server.fd),
             AE_READABLE,
             accept_handler,
+            default_ae_file_proc,
             ClientData::Nil(),
             default_ae_event_finalizer_proc,
         )?;
@@ -120,7 +121,10 @@ pub fn accept_handler(
             warn!("Error allocation resources for the client");
             return;
         }
-        Ok(e) => e,
+        Ok(e) => {
+            server.clients.push(Rc::clone(&e));
+            e
+        }
     };
 
     if server.max_clients > 0 && server.clients.len() > server.max_clients {
@@ -187,7 +191,6 @@ pub fn read_query_from_client(
             .extend_from_slice(&buf[..nread]);
         // TODO: delete this
         debug!("Received: {}", std::str::from_utf8(&buf[..nread]).unwrap());
-        let _ = stream.write("+OK\r\n".as_bytes()); // for debug only
     } else {
         return;
     }
@@ -211,10 +214,16 @@ pub fn read_query_from_client(
                     return;
                 }
                 if client.argc() > 0 {
-                    if let Err(e) = client.process_command(stream, server, el) {
+                    if let Err(e) = client.process_command(server, el) {
                         debug!("{}", e.description());
                         // TODO: free according to err type
-                        free_client_occupied_in_el(server, el, &client_ptr, stream);
+                        match e {
+                            CommandError::Quit =>
+                                free_client_occupied_in_el(server, el, &client_ptr, stream),
+                            CommandError::Close =>
+                                free_client_occupied_in_el(server, el, &client_ptr, stream),
+                            _ => {}
+                        }
                         return;
                     }
                     if client.query_buf.is_empty() {
@@ -230,12 +239,30 @@ pub fn read_query_from_client(
     }
 }
 
+pub fn send_reply_to_client(
+    server: &mut Server,
+    el: &mut AeEventLoop,
+    fd: &Fd,
+    data: &ClientData,
+    mask: i32,
+) {
+    let mut client = data.unwrap_client().as_ref().borrow_mut();
+    if client.reply.is_empty() {
+        return;
+    }
+
+    let mut fd_ref = fd.as_ref().borrow_mut();
+    let fd = fd_ref.unwrap_stream_mut();
+    debug!("ready to reply");
+    fd.write(client.reply[0].as_ref().borrow().string().as_bytes());
+    client.reply.clear();
+}
+
 pub fn server_cron(
     server: &mut Server,
     el: &mut AeEventLoop,
     id: i64,
     data: &ClientData,
 ) -> i32 {
-    debug!("Executing server_cron");
     1000
 }

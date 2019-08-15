@@ -53,4 +53,15 @@ impl Server {
             }
         }
     }
+
+    pub fn find_client(&self, c: &Client) -> Rc<RefCell<Client>> {
+        let ptr1 = c as *const Client;
+        for i in 0..self.clients.len() {
+            let ptr2 = self.clients[i].as_ptr();
+            if ptr1 == ptr2 {
+                return Rc::clone(&self.clients[i]);
+            }
+        }
+        unreachable!()
+    }
 }

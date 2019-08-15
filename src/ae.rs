@@ -68,7 +68,7 @@ impl Fdp {
 
 fn default_ae_time_proc(server: &mut Server, el: &mut AeEventLoop, id: i64, data: &ClientData) -> i32 { 1 }
 
-fn default_ae_file_proc(server: &mut Server, el: &mut AeEventLoop, token: Token, data: &ClientData, mask: i32) {}
+pub fn default_ae_file_proc(server: &mut Server, el: &mut AeEventLoop, fd: &Fd, data: &ClientData, mask: i32) {}
 
 pub fn default_ae_event_finalizer_proc(el: &mut AeEventLoop, data: &ClientData) {}
 
@@ -123,13 +123,15 @@ impl AeEventLoop {
         fd: Fd,
         mask: i32,
         file_proc: AeFileProc,
+        w_file_proc: AeFileProc,
         client_data: ClientData,
         finalizer_proc: AeEventFinalizerProc,
     ) -> Result<(), ()> {
         let mut fe = AeFileEvent {
             fd,
             mask,
-            file_proc,
+            r_file_proc: file_proc,
+            w_file_proc,
             finalizer_proc,
             client_data,
         };
@@ -141,7 +143,7 @@ impl AeEventLoop {
                     fe.fd.as_ref().borrow().to_evented(),
                     Token(i),
                     Self::readiness(mask),
-                    PollOpt::edge(),
+                    PollOpt::level(),
                 ).unwrap();
                 self.file_events[i] = Some(fe);
                 self.file_events_num += 1;
@@ -273,7 +275,18 @@ impl AeEventLoop {
                 let t = event.token();
 
                 let fe = self.occupy_file_event(t.0);
-                fe.file_proc.borrow()(server, self, &fe.fd, &fe.client_data, fe.mask);
+                let mut r_fired = false;
+
+                if (fe.mask & AE_READABLE != 0) && event.readiness().is_readable() {
+                    r_fired = true;
+                    fe.r_file_proc.borrow()(server, self, &fe.fd, &fe.client_data, fe.mask);
+                }
+                if (fe.mask & AE_WRITABLE != 0) && event.readiness().is_writable() {
+                    if !r_fired {
+                        fe.w_file_proc.borrow()(server, self, &fe.fd, &fe.client_data, fe.mask);
+                    }
+                }
+
                 self.un_occupy_file_event(t.0, fe);
 
                 processed += 1;
@@ -320,7 +333,8 @@ impl AeEventLoop {
 struct AeFileEvent {
     fd: Fd,
     mask: i32,
-    file_proc: AeFileProc,
+    r_file_proc: AeFileProc,
+    w_file_proc: AeFileProc,
     finalizer_proc: AeEventFinalizerProc,
     client_data: ClientData,
 }
@@ -366,6 +380,7 @@ fn ae_wait(fd: &Fd, mask: i32, duration: Duration) -> Result<i32, Box<dyn Error>
 pub const AE_READABLE: i32 = 0b0001;
 pub const AE_WRITABLE: i32 = 0b0010;
 pub const AE_EXCEPTION: i32 = 0b0100;
+pub const AE_ALREADY_REGISTER: i32 = 0b1000;
 
 pub const AE_FILE_EVENTS: i32 = 0b0001;
 pub const AE_TIME_EVENTS: i32 = 0b0010;
@@ -383,5 +398,4 @@ mod test {
         assert_eq!(el.file_events.len(), 1024);
         assert_eq!(el.time_events.len(), 0);
     }
-
 }

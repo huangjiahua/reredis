@@ -1,7 +1,7 @@
 use crate::ae::*;
 use std::time::SystemTime;
 use std::rc::Rc;
-use crate::env::read_query_from_client;
+use crate::env::{read_query_from_client, send_reply_to_client};
 use std::cell::RefCell;
 use crate::object::{Sds, RobjPtr, Robj};
 use crate::protocol;
@@ -17,7 +17,7 @@ const CLIENT_SLAVE: i32 = 0b0010;
 const CLIENT_MASTER: i32 = 0b0100;
 const CLIENT_MONITOR: i32 = 0b1000;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum ReplyState {
     None,
     Connect,
@@ -56,8 +56,9 @@ impl Client {
         }));
         el.create_file_event(
             Rc::clone(&client.as_ref().borrow().fd),
-            AE_READABLE,
+            AE_READABLE | AE_WRITABLE,
             read_query_from_client,
+            send_reply_to_client,
             ClientData::Client(Rc::clone(&client)),
             default_ae_event_finalizer_proc,
         )?;
@@ -86,7 +87,6 @@ impl Client {
 
     pub fn process_command(
         &mut self,
-        stream: &mut TcpStream,
         server: &mut Server,
         el: &mut AeEventLoop,
     ) -> Result<(), CommandError> {
@@ -102,7 +102,7 @@ impl Client {
         );
         let cmd = match cmd {
             None => {
-                self.add_str_reply("-Error unknown command\r\n", el);
+                self.add_str_reply("-Error unknown command\r\n", server, el);
                 self.reset();
                 return Err(CommandError::Unknown);
             }
@@ -111,7 +111,7 @@ impl Client {
 
         if (cmd.arity > 0 && cmd.arity as usize != self.argc())
             || (cmd.arity < 0 && (self.argc() < (-cmd.arity) as usize)) {
-            self.add_str_reply("-Error wrong number of arguments\r\n", el);
+            self.add_str_reply("-Error wrong number of arguments\r\n", server, el);
             self.reset();
             return Err(CommandError::WrongNumber);
             // TODO: max memory
@@ -126,7 +126,7 @@ impl Client {
         // TODO: authenticate
 
         // TODO: save server dirty bit and tackle problems with slave server ans monitors
-        cmd.proc.borrow()(self, stream, server, el);
+        cmd.proc.borrow()(self, server, el);
 
         server.stat_num_commands += 1;
 
@@ -146,13 +146,14 @@ impl Client {
         self.bulk_len = None;
     }
 
-    pub fn add_reply(&mut self, r: RobjPtr, el: &mut AeEventLoop) {
-        unimplemented!()
+    pub fn add_reply(&mut self, r: RobjPtr, server: &Server, el: &mut AeEventLoop) {
+        self.reply.push(r);
     }
 
-    pub fn add_str_reply(&mut self, s: &str, el: &mut AeEventLoop) {
+    pub fn add_str_reply(&mut self, s: &str, server: &Server, el: &mut AeEventLoop) {
         self.add_reply(
             Robj::create_string_object(s),
+            server,
             el,
         );
     }
