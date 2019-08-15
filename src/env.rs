@@ -1,7 +1,7 @@
 use crate::server::Server;
 use std::borrow::{BorrowMut, Borrow};
 use std::error::Error;
-use crate::ae::{AE_READABLE, default_ae_event_finalizer_proc, AeEventLoop, Fd, Fdp, default_ae_file_proc};
+use crate::ae::{AE_READABLE, default_ae_event_finalizer_proc, AeEventLoop, Fd, Fdp, default_ae_file_proc, AE_WRITABLE};
 use std::rc::Rc;
 use chrono::Local;
 use std::io::{Write, Read, ErrorKind};
@@ -9,10 +9,11 @@ use log::{LevelFilter, Level};
 use std::cell::RefCell;
 use crate::client::*;
 use mio::net::TcpStream;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 pub const REREDIS_VERSION: &str = "0.0.1";
 pub const REREDIS_REQUEST_MAX_SIZE: usize = 1024 * 1024 * 256;
+pub const REREDIS_MAX_WRITE_PER_EVENT: usize = 64 * 1024;
 
 pub struct Env {
     pub server: Server,
@@ -216,7 +217,6 @@ pub fn read_query_from_client(
                 if client.argc() > 0 {
                     if let Err(e) = client.process_command(server, el) {
                         debug!("{}", e.description());
-                        // TODO: free according to err type
                         match e {
                             CommandError::Quit =>
                                 free_client_occupied_in_el(server, el, &client_ptr, stream),
@@ -247,15 +247,48 @@ pub fn send_reply_to_client(
     mask: i32,
 ) {
     let mut client = data.unwrap_client().as_ref().borrow_mut();
+    let mut written_bytes: usize = 0;
+    let mut written_elem: usize = 0;
     if client.reply.is_empty() {
         return;
     }
 
     let mut fd_ref = fd.as_ref().borrow_mut();
-    let fd = fd_ref.unwrap_stream_mut();
+    let stream = fd_ref.unwrap_stream_mut();
     debug!("ready to reply");
-    fd.write(client.reply[0].as_ref().borrow().string().as_bytes());
-    client.reply.clear();
+
+    if client.reply.len() > 1 {
+        let start = format!("${}\r\n", client.reply.len());
+        match stream.write(start.as_bytes()) {
+            Err(e) => if e.kind() != ErrorKind::Interrupted {
+                free_client_occupied_in_el(server, el, data.unwrap_client(), stream);
+                return;
+            }
+            Ok(n) => written_bytes += n,
+        }
+    }
+    for rep in client.reply
+        .iter()
+        .map(|x| x.as_ref()) {
+        match stream.write(rep.borrow().string().as_bytes()) {
+            Err(e) => if e.kind() != ErrorKind::Interrupted {
+                free_client_occupied_in_el(server, el, data.unwrap_client(), stream);
+                return;
+            }
+            Ok(n) => written_bytes += n,
+        }
+        written_elem += 1;
+        if written_bytes >= REREDIS_MAX_WRITE_PER_EVENT {
+            break;
+        }
+    }
+
+    client.last_interaction = SystemTime::now();
+    if written_elem == client.reply.len() {
+        client.reply.clear();
+    } else {
+        client.reply.drain(0..written_elem);
+    }
 }
 
 pub fn server_cron(
