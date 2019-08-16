@@ -527,10 +527,11 @@ impl<K, V> Dict<K, V>
         for table in 0..2 {
             let idx = idx & self.ht[table].size_mask;
 
-            if let Some(_) = self.ht[table]
+            if let Some(v) = self.ht[table]
                 .iter_mut(idx)
                 .filter(|p| p.0.eq(&key))
                 .next() {
+                *v.1 = value;
                 return None;
             }
 
@@ -724,6 +725,28 @@ mod test {
         let a = 1;
         let b = 2;
         hd.replace(a, b);
+    }
+
+    #[test]
+    fn replace_existed() {
+        let mut hd: Dict<usize, usize> = Dict::new(int_hash_func, 0);
+        for i in 0..5000 {
+            hd.replace(i, i + 1);
+        }
+
+        for i in 0..5000 {
+            let r = hd.find(&i).unwrap();
+            assert_eq!(*r.1, i + 1);
+        }
+
+        for i in 0..5000 {
+            hd.replace(i, i);
+        }
+
+        for i in 0..5000 {
+            let r = hd.find(&i).unwrap();
+            assert_eq!(*r.1, i);
+        }
     }
 
     #[test]
