@@ -300,6 +300,7 @@ fn pop_generic_command(
     el: &mut AeEventLoop,
     w: ListWhere,
 ) {
+    // TODO: delete object when pop the last element
     let db = &mut server.db[client.db_idx];
     let r = db.look_up_key_read(&client.argv[1]);
 
@@ -371,7 +372,7 @@ pub fn get_set_command(
     let db = &mut server.db[client.db_idx];
     db.dict.replace(Rc::clone(&client.argv[1]),
                     Rc::clone(&client.argv[2]));
-    db.remove_expire(&client.argv[1]);
+    let _ = db.remove_expire(&client.argv[1]);
     server.dirty += 1;
 }
 

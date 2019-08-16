@@ -169,14 +169,14 @@ pub enum ClientData {
 impl ClientData {
     pub fn unwrap_client(&self) -> &Rc<RefCell<Client>> {
         match self {
-            ClientData::Client(c) => c,
+            Self::Client(c) => c,
             _ => panic!("not a client"),
         }
     }
 
     pub fn is_client(&self) -> bool {
         match self {
-            ClientData::Client(_) => true,
+            Self::Client(_) => true,
             _ => false,
         }
     }
@@ -193,11 +193,11 @@ pub enum CommandError {
 impl CommandError {
     pub fn description(&self) -> &'static str {
         match self {
-            CommandError::Malformed => "Client protocol error",
-            CommandError::Quit => "Client quit",
-            CommandError::Close => "Client close",
-            CommandError::Unknown => "Unknown command",
-            CommandError::WrongNumber => "Wrong number of arguments",
+            Self::Malformed => "Client protocol error",
+            Self::Quit => "Client quit",
+            Self::Close => "Client close",
+            Self::Unknown => "Unknown command",
+            Self::WrongNumber => "Wrong number of arguments",
             _ => "",
         }
     }

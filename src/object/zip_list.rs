@@ -19,21 +19,21 @@ enum Encoding {
 impl Encoding {
     fn unwrap_str(&self) -> usize {
         match self {
-            Encoding::Str(sz) => *sz,
+            Self::Str(sz) => *sz,
             _ => panic!("this is an int encoding"),
         }
     }
 
     fn unwrap_int(&self) -> i64 {
         match self {
-            Encoding::Int(v) => *v,
+            Self::Int(v) => *v,
             _ => panic!("this is a str encoding"),
         }
     }
 
     fn is_str(&self) -> bool {
         match self {
-            Encoding::Str(_) => true,
+            Self::Str(_) => true,
             _ => false,
         }
     }
@@ -44,7 +44,7 @@ impl Encoding {
 
     fn blob_len(&self) -> usize {
         match self {
-            Encoding::Str(sz) => {
+            Self::Str(sz) => {
                 if *sz < 1 << 6 {
                     return 1;
                 }
@@ -54,7 +54,7 @@ impl Encoding {
                 assert!(*sz < 1 << 32);
                 5
             }
-            Encoding::Int(v) => {
+            Self::Int(v) => {
                 if *v > 0 && *v < 12 {
                     return 1;
                 }
@@ -77,15 +77,15 @@ impl Encoding {
 
     fn blob_len_with_content(&self) -> usize {
         match self {
-            Encoding::Str(sz) => self.blob_len() + *sz,
-            Encoding::Int(_) => self.blob_len(),
+            Self::Str(sz) => self.blob_len() + *sz,
+            Self::Int(_) => self.blob_len(),
         }
     }
 
     fn index(&self, idx: usize) -> u8 {
         match self {
-            Encoding::Str(_) => self.index_str(idx),
-            Encoding::Int(_) => self.index_int(idx),
+            Self::Str(_) => self.index_str(idx),
+            Self::Int(_) => self.index_int(idx),
         }
     }
 
@@ -108,7 +108,7 @@ impl Encoding {
 
     fn index_int(&self, idx: usize) -> u8 {
         assert!(idx < self.blob_len());
-        if let Encoding::Int(v) = self {
+        if let Self::Int(v) = self {
             if idx == 0 {
                 if *v > 0 && *v < 12 {
                     return *v as u8 | 0b1111_0000;
@@ -142,8 +142,8 @@ impl Encoding {
     fn iter_with_content<'a>(&'a self, content: &'a [u8])
                              -> Chain<EncodingIter, Cloned<slice::Iter<u8>>> {
         match self {
-            Encoding::Str(_) => self.iter().chain(content.iter().cloned()),
-            Encoding::Int(_) => self.iter().chain("".as_bytes().iter().cloned()),
+            Self::Str(_) => self.iter().chain(content.iter().cloned()),
+            Self::Int(_) => self.iter().chain("".as_bytes().iter().cloned()),
         }
     }
 
@@ -174,7 +174,7 @@ impl Encoding {
             v <<= 8;
             v |= x[i] as usize;
         }
-        Encoding::Str(v)
+        Self::Str(v)
     }
 
     fn parse_int_enc(x: &[u8]) -> Encoding {
@@ -190,7 +190,7 @@ impl Encoding {
                 }
                 let k = x[0] & 0x0f;
                 assert!(k > 0 && k < 12);
-                return Encoding::Int(k as i64);
+                return Self::Int(k as i64);
             }
         };
         let mut v = if x[1] >> 7 == 1 {
@@ -202,7 +202,7 @@ impl Encoding {
             v <<= 8;
             v |= x[i + 1] as i64;
         }
-        Encoding::Int(v)
+        Self::Int(v)
     }
 
     fn write_with_content(&self, dst: &mut [u8], content: &[u8]) {
