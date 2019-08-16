@@ -68,6 +68,14 @@ impl DB {
         Ok(())
     }
 
+    pub fn delete_key(&mut self, key: &RobjPtr) -> Result<(), ()> {
+        if self.expires.len() != 0 {
+            let _ = self.expires.delete(key);
+        }
+        self.dict.delete(key)?;
+        Ok(())
+    }
+
     pub fn look_up_key_read(&mut self, key: &RobjPtr) -> Option<RobjPtr> {
         let _ = self.expire_if_needed(key);
         self.look_up_key(key)

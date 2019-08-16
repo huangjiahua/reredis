@@ -215,6 +215,13 @@ impl Robj {
             Box::new(ZipList::new()),
         )
     }
+
+    pub fn is_string(&self) -> bool {
+        match self.obj_type {
+            RobjType::String => true,
+            _ => false,
+        }
+    }
 }
 
 impl DictPartialEq for RobjPtr {

@@ -11,6 +11,7 @@ use crate::server::Server;
 use std::borrow::Borrow;
 use mio::net::TcpStream;
 use crate::command::{lookup_command, CMD_BULK};
+use crate::util::*;
 
 const CLIENT_CLOSE: i32 = 0b0001;
 const CLIENT_SLAVE: i32 = 0b0010;
@@ -200,20 +201,4 @@ impl CommandError {
             _ => "",
         }
     }
-}
-
-fn case_eq(lhs: &str, rhs: &str) -> bool {
-    if lhs.len() != rhs.len() {
-        return false;
-    }
-    let r = rhs.as_bytes();
-    for p in lhs.as_bytes()
-        .iter()
-        .map(|x| x.to_ascii_lowercase())
-        .zip(r.iter()) {
-        if p.0 != *p.1 {
-            return false;
-        }
-    }
-    true
 }

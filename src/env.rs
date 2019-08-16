@@ -257,17 +257,6 @@ pub fn send_reply_to_client(
     let stream = fd_ref.unwrap_stream_mut();
     debug!("ready to reply");
 
-    if client.reply.len() > 1 {
-        let start = format!("*{}\r\n", client.reply.len());
-        match stream.write(start.as_bytes()) {
-            Err(e) => if e.kind() != ErrorKind::Interrupted {
-                debug!("Error writing to client: {}", e.description());
-                free_client_occupied_in_el(server, el, data.unwrap_client(), stream);
-                return;
-            }
-            Ok(n) => written_bytes += n,
-        }
-    }
     for rep in client.reply
         .iter()
         .map(|x| x.as_ref()) {
