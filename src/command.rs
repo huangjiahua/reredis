@@ -2,7 +2,7 @@ use crate::client::Client;
 use crate::server::Server;
 use crate::ae::AeEventLoop;
 use std::rc::Rc;
-use crate::shared::{OK, NULL_BULK, CRLF, CZERO, CONE, COLON, WRONG_TYPE};
+use crate::shared::{OK, NULL_BULK, CRLF, CZERO, CONE, COLON, WRONG_TYPE, PONG};
 use crate::util::case_eq;
 use crate::object::{Robj, RobjPtr};
 use std::mem::swap;
@@ -256,6 +256,86 @@ pub fn llen_command(
     unimplemented!()
 }
 
+pub fn incr_by_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let r = client.argv[2].borrow().object_to_long();
+    match r {
+        Ok(n) => incr_decr_command(client, server, el, n),
+        Err(_) => client.add_str_reply("-ERR value is not an integer or out of range\r\n"),
+    }
+}
+
+pub fn decr_by_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let r = client.argv[2].borrow().object_to_long();
+    match r {
+        Ok(n) => {
+            if n == std::i64::MIN {
+                client.add_str_reply("-ERR value is not an integer or out of range\r\n");
+                return;
+            }
+            incr_decr_command(client, server, el, -n)
+        }
+        Err(_) => client.add_str_reply("-ERR value is not an integer or out of range\r\n"),
+    }
+}
+
+pub fn get_set_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    get_command(client, server, el);
+    let db = &mut server.db[client.db_idx];
+    db.dict.replace(Rc::clone(&client.argv[1]),
+                    Rc::clone(&client.argv[2]));
+    db.remove_expire(&client.argv[1]);
+    server.dirty += 1;
+}
+
+pub fn select_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let idx = client.argv[1].borrow().object_to_long();
+    match idx {
+        Err(_) => {
+            client.add_str_reply("-ERR invalid DB index\r\n")
+        }
+        Ok(idx) => {
+            if idx < 0 || idx >= server.db.len() as i64 {
+                client.add_str_reply("-ERR invalid DB index\r\n");
+                return;
+            }
+            client.db_idx = idx as usize;
+            client.add_reply(shared_object!(OK));
+        }
+    }
+}
+
+pub fn ping_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    client.add_reply(shared_object!(PONG));
+}
+
+pub fn command_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    client.add_reply(shared_object!(OK));
+}
+
 const CMD_TABLE: &[Command] = &[
     Command { name: "get", proc: get_command, arity: 2, flags: CMD_INLINE },
     Command { name: "set", proc: set_command, arity: 3, flags: CMD_INLINE },
@@ -265,6 +345,16 @@ const CMD_TABLE: &[Command] = &[
     Command { name: "incr", proc: incr_command, arity: 2, flags: CMD_INLINE },
     Command { name: "decr", proc: decr_command, arity: 2, flags: CMD_INLINE },
     Command { name: "mget", proc: mget_command, arity: -2, flags: CMD_INLINE },
+    // TODO
+    Command { name: "incrby", proc: incr_by_command, arity: 3, flags: CMD_INLINE },
+    Command { name: "decrby", proc: decr_by_command, arity: 3, flags: CMD_INLINE },
+    Command { name: "getset", proc: get_set_command, arity: 3, flags: CMD_INLINE },
+    // TODO
+    Command { name: "select", proc: select_command, arity: 2, flags: CMD_INLINE },
+    // TODO
+    Command { name: "ping", proc: ping_command, arity: 1, flags: CMD_INLINE },
+    // TODO
+    Command { name: "command", proc: command_command, arity: 1, flags: CMD_INLINE },
 ];
 
 pub fn lookup_command(name: &str) -> Option<&'static Command> {
