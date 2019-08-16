@@ -4,8 +4,10 @@ use crate::ae::AeEventLoop;
 use std::rc::Rc;
 use crate::shared::{OK, NULL_BULK, CRLF, CZERO, CONE, COLON, WRONG_TYPE, PONG};
 use crate::util::case_eq;
-use crate::object::{Robj, RobjPtr};
+use crate::object::{Robj, RobjPtr, RobjEncoding, RobjType};
 use std::mem::swap;
+use crate::object::list::ListWhere;
+use crate::object::RobjType::List;
 
 type CommandProc = fn(
     client: &mut Client,
@@ -221,7 +223,7 @@ pub fn rpush_command(
     server: &mut Server,
     el: &mut AeEventLoop,
 ) {
-    unimplemented!()
+    push_generic_command(client, server, el, ListWhere::Tail);
 }
 
 pub fn lpush_command(
@@ -229,7 +231,51 @@ pub fn lpush_command(
     server: &mut Server,
     el: &mut AeEventLoop,
 ) {
-    unimplemented!()
+    push_generic_command(client, server, el, ListWhere::Head);
+}
+
+pub fn push_generic_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+    w: ListWhere,
+) {
+    let db = &mut server.db[client.db_idx];
+    let r = db.look_up_key_read(&client.argv[1]);
+    let mut create_new: bool = false;
+
+    let list_obj = match r {
+        None => {
+            create_new = true;
+            Robj::create_zip_list_object()
+        }
+        Some(o) => o,
+    };
+
+    if !list_obj.borrow().is_list() {
+        client.add_reply(shared_object!(WRONG_TYPE));
+        return;
+    }
+
+    for key in client.argv
+        .iter()
+        .skip(2) {
+        match w {
+            ListWhere::Tail => list_obj.borrow_mut().list_push_back(Rc::clone(key)),
+            ListWhere::Head => list_obj.borrow_mut().list_push_front(Rc::clone(key)),
+        }
+    }
+
+    if create_new {
+        db.dict.add(Rc::clone(&client.argv[1]), list_obj).unwrap();
+    }
+
+    server.dirty += 1;
+    if client.argc() - 2 == 1 {
+        client.add_reply(shared_object!(CZERO));
+    } else {
+        client.add_str_reply(&format!(":{}\r\n", client.argc() - 2));
+    }
 }
 
 pub fn rpop_command(
@@ -237,7 +283,7 @@ pub fn rpop_command(
     server: &mut Server,
     el: &mut AeEventLoop,
 ) {
-    unimplemented!()
+    pop_generic_command(client, server, el, ListWhere::Tail);
 }
 
 pub fn lpop_command(
@@ -245,7 +291,37 @@ pub fn lpop_command(
     server: &mut Server,
     el: &mut AeEventLoop,
 ) {
-    unimplemented!()
+    pop_generic_command(client, server, el, ListWhere::Head);
+}
+
+fn pop_generic_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+    w: ListWhere,
+) {
+    let db = &mut server.db[client.db_idx];
+    let r = db.look_up_key_read(&client.argv[1]);
+
+    let list_obj = match r {
+        None => {
+            client.add_reply(shared_object!(NULL_BULK));
+            return;
+        }
+        Some(o) => o,
+    };
+
+    let o = list_obj.borrow_mut().list_pop(w);
+
+    match o {
+        None => client.add_reply(shared_object!(NULL_BULK)),
+        Some(o) => {
+            client.add_str_reply(&format!("${}\r\n", o.borrow().string().len()));
+            client.add_reply(o);
+            client.add_reply(shared_object!(CRLF));
+            server.dirty += 1;
+        }
+    }
 }
 
 pub fn llen_command(
@@ -345,6 +421,10 @@ const CMD_TABLE: &[Command] = &[
     Command { name: "incr", proc: incr_command, arity: 2, flags: CMD_INLINE },
     Command { name: "decr", proc: decr_command, arity: 2, flags: CMD_INLINE },
     Command { name: "mget", proc: mget_command, arity: -2, flags: CMD_INLINE },
+    Command { name: "rpush", proc: rpush_command, arity: -3, flags: CMD_INLINE },
+    Command { name: "lpush", proc: lpush_command, arity: -3, flags: CMD_INLINE },
+    Command { name: "lpop", proc: lpop_command, arity: 2, flags: CMD_INLINE },
+    Command { name: "rpop", proc: rpop_command, arity: 2, flags: CMD_INLINE },
     // TODO
     Command { name: "incrby", proc: incr_by_command, arity: 3, flags: CMD_INLINE },
     Command { name: "decrby", proc: decr_by_command, arity: 3, flags: CMD_INLINE },

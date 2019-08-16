@@ -3,6 +3,12 @@ use crate::object::{Sds, ObjectData, RobjPtr};
 
 pub type List = LinkedList<RobjPtr>;
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum ListWhere {
+    Head,
+    Tail,
+}
+
 //impl ObjectData for List {
 //    fn list_ref(&self) -> &List {
 //        self
