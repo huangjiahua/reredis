@@ -241,7 +241,7 @@ impl<K, V> Dict<K, V>
                         None => self.ht[table].table[idx] = e.next.take(),
                         Some(p) => p.next = e.next.take(),
                     }
-                    self.ht[table].size -= 1;
+                    self.ht[table].used -= 1;
                     return Ok((e.key, e.value));
                 }
 
@@ -802,6 +802,20 @@ mod test {
             if i == k { continue; }
             assert_eq!(hd.fetch_value(&i).unwrap(), &i);
         }
+    }
+
+    #[test]
+    fn bug_detect_1() {
+        let mut hd: Dict<usize, usize> = Dict::new(int_hash_func, 0);
+        hd.add(1, 1);
+        hd.delete(&1);
+        hd.find_by_mut(&1);
+        hd.add(1, 1);
+        hd.add(2, 2);
+        hd.add(3, 3);
+        hd.find_by_mut(&1);
+        hd.find_by_mut(&2);
+        hd.find_by_mut(&3);
     }
 
     #[test]
