@@ -207,7 +207,6 @@ impl AeEventLoop {
             time_proc,
             client_data,
             finalizer_proc,
-            next: None,
         };
         self.time_events.push_back(te);
         id
@@ -345,7 +344,6 @@ struct AeTimeEvent {
     time_proc: AeTimeProc,
     finalizer_proc: AeEventFinalizerProc,
     client_data: ClientData,
-    next: Option<Box<AeTimeEvent>>,
 }
 
 

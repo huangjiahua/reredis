@@ -39,13 +39,17 @@ pub fn get_command(
     match r {
         None => client.add_reply(shared_object!(NULL_BULK)),
         Some(s) => {
-            if !s.borrow().is_string() {
-                client.add_reply(shared_object!(WRONG_TYPE));
-                return;
-            }
-            client.add_str_reply(&format!("${}\r\n", s.borrow().string().len()));
-            client.add_reply(s);
-            client.add_reply(shared_object!(CRLF));
+            let enc = s.borrow().encoding();
+            let rep = match enc {
+                RobjEncoding::Raw => s,
+                RobjEncoding::EmbStr => s,
+                RobjEncoding::Int => s.borrow().gen_string(),
+                _ => {
+                    client.add_reply(shared_object!(WRONG_TYPE));
+                    return;
+                }
+            };
+            add_single_reply(client, rep);
         }
     }
 }
@@ -73,17 +77,19 @@ fn set_generic_command(
     el: &mut AeEventLoop,
     nx: bool,
 ) {
+    let o = to_int_if_needed(Rc::clone(&client.argv[2]));
+
     let db = &mut server.db[client.db_idx];
     let r = db.dict.add(
         Rc::clone(&client.argv[1]),
-        Rc::clone(&client.argv[2]),
+        Rc::clone(&o),
     );
 
     if r.is_err() {
         if !nx {
             db.dict.replace(
                 Rc::clone(&client.argv[1]),
-                Rc::clone(&client.argv[2]),
+                o,
             );
         } else {
             client.add_reply(shared_object!(CZERO));
@@ -98,6 +104,14 @@ fn set_generic_command(
         false => shared_object!(OK),
     };
     client.add_reply(reply);
+}
+
+pub fn to_int_if_needed(o: RobjPtr) -> RobjPtr {
+    let can_be_int = o.borrow().object_to_long();
+    match can_be_int {
+        Err(_) => o,
+        Ok(i) => Robj::create_int_object(i),
+    }
 }
 
 pub fn del_command(
@@ -116,11 +130,7 @@ pub fn del_command(
         }
     }
 
-    match deleted {
-        0 => client.add_reply(shared_object!(CZERO)),
-        1 => client.add_reply(shared_object!(CONE)),
-        _ => client.add_str_reply(&format!(":{}\r\n", deleted)),
-    }
+    client.add_reply(gen_usize_reply(deleted));
 }
 
 pub fn exists_command(
@@ -166,10 +176,10 @@ pub fn incr_decr_command(
     val = match r {
         None => 0,
         Some(v) => {
-            let n = v.borrow().object_to_long();
-            match n {
-                Ok(i) => i,
-                Err(_) => {
+            let enc = v.borrow().encoding();
+            match enc {
+                RobjEncoding::Int => v.borrow().integer(),
+                _ => {
                     client.add_str_reply("-ERR value is not an integer or out of range\r\n");
                     return;
                 }
@@ -183,10 +193,10 @@ pub fn incr_decr_command(
         }
         Some(v) => v,
     };
-    let o = Robj::create_string_object_from_long(val);
+    let o = Robj::create_int_object(val);
     db.dict.replace(Rc::clone(&client.argv[1]), Rc::clone(&o));
     client.add_reply(shared_object!(COLON));
-    client.add_reply(o);
+    client.add_reply(o.borrow().gen_string());
     client.add_reply(shared_object!(CRLF));
 }
 
@@ -210,9 +220,7 @@ pub fn mget_command(
                 if !o.borrow().is_string() {
                     client.add_reply(shared_object!(NULL_BULK));
                 }
-                client.add_str_reply(&format!("${}\r\n", o.borrow().string().len()));
-                client.add_reply(o);
-                client.add_reply(shared_object!(CRLF));
+                add_single_reply(client, o);
             }
         }
     }
@@ -260,21 +268,20 @@ pub fn push_generic_command(
     for key in client.argv
         .iter()
         .skip(2) {
-        match w {
-            ListWhere::Tail => list_obj.borrow_mut().list_push_back(Rc::clone(key)),
-            ListWhere::Head => list_obj.borrow_mut().list_push_front(Rc::clone(key)),
-        }
+        list_obj.borrow_mut().list_push(Rc::clone(key), w);
     }
+
+    let len = list_obj.borrow().list_len();
 
     if create_new {
         db.dict.add(Rc::clone(&client.argv[1]), list_obj).unwrap();
     }
 
     server.dirty += 1;
-    if client.argc() - 2 == 1 {
+    if len == 0 {
         client.add_reply(shared_object!(CZERO));
     } else {
-        client.add_str_reply(&format!(":{}\r\n", client.argc() - 2));
+        client.add_str_reply(&format!(":{}\r\n", len));
     }
 }
 
@@ -300,7 +307,6 @@ fn pop_generic_command(
     el: &mut AeEventLoop,
     w: ListWhere,
 ) {
-    // TODO: delete object when pop the last element
     let db = &mut server.db[client.db_idx];
     let r = db.look_up_key_read(&client.argv[1]);
 
@@ -313,13 +319,14 @@ fn pop_generic_command(
     };
 
     let o = list_obj.borrow_mut().list_pop(w);
+    if list_obj.borrow().list_len() == 0 {
+        db.delete_key(&client.argv[1]);
+    }
 
     match o {
         None => client.add_reply(shared_object!(NULL_BULK)),
         Some(o) => {
-            client.add_str_reply(&format!("${}\r\n", o.borrow().string().len()));
-            client.add_reply(o);
-            client.add_reply(shared_object!(CRLF));
+            add_single_reply(client, o);
             server.dirty += 1;
         }
     }
@@ -330,7 +337,66 @@ pub fn llen_command(
     server: &mut Server,
     el: &mut AeEventLoop,
 ) {
-    unimplemented!()
+    let db = &mut server.db[client.db_idx];
+    match db.look_up_key_read(&client.argv[1]) {
+        None => client.add_reply(shared_object!(CZERO)),
+        Some(o) => {
+            if o.borrow().object_type() != RobjType::List {
+                client.add_reply(shared_object!(WRONG_TYPE));
+            } else {
+                client.add_reply(gen_usize_reply(o.borrow().list_len()));
+            }
+        }
+    }
+}
+
+pub fn lindex_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let db = &mut server.db[client.db_idx];
+
+    let to_int = client.argv[2].borrow().object_to_long();
+
+    let idx = match to_int {
+        Ok(i) => i,
+        Err(_) => {
+            client.add_str_reply("-ERR value is not an integer or out of range\r\n");
+            return;
+        }
+    };
+
+    match db.look_up_key_read(&client.argv[1]) {
+        None => client.add_reply(shared_object!(NULL_BULK)),
+        Some(o) => {
+            if o.borrow().object_type() != RobjType::List {
+                client.add_reply(shared_object!(WRONG_TYPE));
+            } else {
+                let len = o.borrow().list_len();
+                let real_idx = if idx >= 0 {
+                    idx
+                } else {
+                    // this won't overflow because
+                    // it is not possible for len to be
+                    // more that usize MAX
+                    len as i64 + idx
+                };
+
+                if real_idx < 0 {
+                    client.add_reply(shared_object!(NULL_BULK));
+                    return;
+                }
+
+                match o.borrow().list_index(real_idx as usize) {
+                    None => client.add_reply(shared_object!(NULL_BULK)),
+                    Some(r) => {
+                        add_single_reply(client, r);
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub fn incr_by_command(
@@ -368,10 +434,11 @@ pub fn get_set_command(
     server: &mut Server,
     el: &mut AeEventLoop,
 ) {
+    let o = to_int_if_needed(Rc::clone(&client.argv[2]));
     get_command(client, server, el);
     let db = &mut server.db[client.db_idx];
     db.dict.replace(Rc::clone(&client.argv[1]),
-                    Rc::clone(&client.argv[2]));
+                    o);
     let _ = db.remove_expire(&client.argv[1]);
     server.dirty += 1;
 }
@@ -413,6 +480,72 @@ pub fn command_command(
     client.add_reply(shared_object!(OK));
 }
 
+pub fn object_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let sub = client.argv[1].borrow().string().to_ascii_lowercase();
+    match &sub[..] {
+        "encoding" => object_encoding_command(client, server, el),
+        _ => {
+            client.add_str_reply("-Error unknown command\r\n");
+        }
+    }
+}
+
+pub fn object_encoding_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    if client.argc() != 3 {
+        client.add_str_reply("-Error wrong number of arguments\r\n");
+        return;
+    }
+
+    let db = &mut server.db[client.db_idx];
+    let o = db.look_up_key_read(&client.argv[2]);
+
+    let o = match o {
+        None => {
+            client.add_reply(shared_object!(NULL_BULK));
+            return;
+        }
+        Some(obj) => obj,
+    };
+
+    let s = match o.borrow().encoding() {
+        RobjEncoding::LinkedList => "linkedlist",
+        RobjEncoding::Raw => "raw",
+        RobjEncoding::Int => "int",
+        RobjEncoding::Ht => "hashtable",
+        RobjEncoding::ZipMap => "ziplist",
+        RobjEncoding::ZipList => "ziplist",
+        RobjEncoding::IntSet => "intset",
+        RobjEncoding::SkipList => "skiplist",
+        RobjEncoding::EmbStr => "embstr",
+    };
+
+    client.add_str_reply(&format!("${}\r\n", s.len()));
+    client.add_str_reply(s);
+    client.add_reply(shared_object!(CRLF));
+}
+
+fn gen_usize_reply(i: usize) -> RobjPtr {
+    match i {
+        0 => shared_object!(CZERO),
+        1 => shared_object!(CONE),
+        k => Robj::create_string_object(&format!(":{}\r\n", k)),
+    }
+}
+
+fn add_single_reply(c: &mut Client, o: RobjPtr) {
+    c.add_str_reply(&format!("${}\r\n", o.borrow().string().len()));
+    c.add_reply(o);
+    c.add_reply(shared_object!(CRLF));
+}
+
 const CMD_TABLE: &[Command] = &[
     Command { name: "get", proc: get_command, arity: 2, flags: CMD_INLINE },
     Command { name: "set", proc: set_command, arity: 3, flags: CMD_INLINE },
@@ -426,6 +559,8 @@ const CMD_TABLE: &[Command] = &[
     Command { name: "lpush", proc: lpush_command, arity: -3, flags: CMD_INLINE },
     Command { name: "lpop", proc: lpop_command, arity: 2, flags: CMD_INLINE },
     Command { name: "rpop", proc: rpop_command, arity: 2, flags: CMD_INLINE },
+    Command { name: "llen", proc: llen_command, arity: 2, flags: CMD_INLINE },
+    Command { name: "lindex", proc: lindex_command, arity: 3, flags: CMD_INLINE },
     // TODO
     Command { name: "incrby", proc: incr_by_command, arity: 3, flags: CMD_INLINE },
     Command { name: "decrby", proc: decr_by_command, arity: 3, flags: CMD_INLINE },
@@ -435,6 +570,7 @@ const CMD_TABLE: &[Command] = &[
     // TODO
     Command { name: "ping", proc: ping_command, arity: 1, flags: CMD_INLINE },
     // TODO
+    Command { name: "object", proc: object_command, arity: -2, flags: CMD_INLINE },
     Command { name: "command", proc: command_command, arity: 1, flags: CMD_INLINE },
 ];
 

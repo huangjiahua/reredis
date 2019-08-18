@@ -1048,4 +1048,14 @@ mod test {
         let h = h.delete_range(205);
         assert!(h.at_end());
     }
+
+    #[test]
+    fn len_change() {
+        let mut list = ZipList::new();
+        assert_eq!(list.len(), 0);
+        list.push("foo".as_bytes());
+        assert_eq!(list.len(), 1);
+        list.front_mut().insert("bar".as_bytes());
+        assert_eq!(list.len(), 2);
+    }
 }

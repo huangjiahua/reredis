@@ -121,7 +121,6 @@ mod test {
     #[test]
     fn get_available_space() {
         let s = Sds::sds_empty();
-        assert!(s.sds_avail() >= 0);
         let mut s = Sds::from("hello");
         s.sds_clear();
         assert_eq!(s.sds_avail(), 5);

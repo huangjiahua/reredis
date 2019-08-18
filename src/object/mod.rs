@@ -21,9 +21,9 @@ use zset::Zset;
 
 use crate::hash;
 use rand::prelude::*;
-use std::borrow::{BorrowMut, Borrow};
 use crate::object::zip_list::ZipListValue;
 use crate::object::list::ListWhere;
+use std::hint::unreachable_unchecked;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum RobjType {
@@ -50,6 +50,9 @@ pub enum RobjEncoding {
 pub trait ObjectData {
     fn sds_ref(&self) -> &str {
         panic!("This is not an Sds string");
+    }
+    fn integer(&self) -> i64 {
+        panic!("This is not an integer");
     }
     fn linked_list_ref(&self) -> &List {
         panic!("This is not a List");
@@ -80,6 +83,10 @@ pub struct Robj {
 impl Robj {
     pub fn string(&self) -> &str {
         self.ptr.sds_ref()
+    }
+
+    pub fn integer(&self) -> i64 {
+        self.ptr.integer()
     }
 
     pub fn dup_string_object(&self) -> RobjPtr {
@@ -121,6 +128,20 @@ impl Robj {
         ))
     }
 
+    pub fn create_int_object(i: i64) -> RobjPtr {
+        Self::create_object(
+            RobjType::String,
+            RobjEncoding::Int,
+            Box::new(i),
+        )
+    }
+
+    pub fn gen_string(&self) -> RobjPtr {
+        Self::create_string_object_from_long(
+            self.ptr.integer(),
+        )
+    }
+
     pub fn create_string_object(string: &str) -> RobjPtr {
         Self::create_object(
             RobjType::String,
@@ -131,14 +152,14 @@ impl Robj {
 
     pub fn create_raw_string_object(string: &str) -> RobjPtr {
         let ret = Self::create_string_object(string);
-        ret.as_ref().borrow_mut().encoding = RobjEncoding::Raw;
+        ret.borrow_mut().encoding = RobjEncoding::Raw;
         ret
     }
 
     pub fn create_embedded_string_object(string: &str) -> RobjPtr {
         // TODO: add embedded string support
         let ret = Self::create_string_object(string);
-        ret.as_ref().borrow_mut().encoding = RobjEncoding::EmbStr;
+        ret.borrow_mut().encoding = RobjEncoding::EmbStr;
         ret
     }
 
@@ -161,7 +182,7 @@ impl Robj {
     }
 
     pub fn string_obj_eq(lhs: &RobjPtr, rhs: &RobjPtr) -> bool {
-        lhs.as_ref().borrow().string() == rhs.as_ref().borrow().string()
+        lhs.borrow().string() == rhs.borrow().string()
     }
 
     pub fn create_list_object() -> RobjPtr {
@@ -243,34 +264,70 @@ impl Robj {
         self.encoding
     }
 
-    pub fn list_push_front(&mut self, o: RobjPtr) {
-        if self.encoding == RobjEncoding::ZipList {
-            let mut l = self.ptr.as_mut().zip_list_mut();
-            let mut node = l.front_mut();
-            node.insert(o.as_ref().borrow().string().as_bytes());
-        } else if self.encoding == RobjEncoding::LinkedList {
-            let mut l = self.ptr.as_mut().linked_list_mut();
-            l.push_front(o);
-        } else {
-            unreachable!();
+    pub fn object_type(&self) -> RobjType {
+        self.obj_type
+    }
+
+    pub fn list_push(&mut self, o: RobjPtr, w: ListWhere) {
+        match self.encoding {
+            RobjEncoding::ZipList => {
+                if self.list_can_update(&o) {
+                    self.list_update_push(o, w);
+                    return;
+                }
+                let mut l = self.ptr.zip_list_mut();
+                match w {
+                    ListWhere::Tail => {
+                        l.push(o.borrow().string().as_bytes());
+                    }
+                    ListWhere::Head => {
+                        let mut node = l.front_mut();
+                        node.insert(o.borrow().string().as_bytes());
+                    }
+                }
+            }
+            RobjEncoding::LinkedList => {
+                let mut l = self.ptr.linked_list_mut();
+                match w {
+                    ListWhere::Tail => l.push_back(o),
+                    ListWhere::Head => l.push_front(o),
+                }
+            }
+            _ => unreachable!(),
         }
     }
 
-    pub fn list_push_back(&mut self, o: RobjPtr) {
-        if self.encoding == RobjEncoding::ZipList {
-            let mut l = self.ptr.as_mut().zip_list_mut();
-            l.push(o.as_ref().borrow().string().as_bytes());
-        } else if self.encoding == RobjEncoding::LinkedList {
-            let mut l = self.ptr.as_mut().linked_list_mut();
-            l.push_back(o);
-        } else {
-            unreachable!();
+    fn list_can_update(&self, o: &RobjPtr) -> bool {
+        if (o.borrow().string().len() > (1 << 16)) ||
+            (self.list_len() == 7) {
+            return true;
         }
+        false
+    }
+
+    fn list_update_push(&mut self, o: RobjPtr, w: ListWhere) {
+        assert_eq!(self.encoding, RobjEncoding::ZipList);
+        let old_list = self.ptr.zip_list_ref();
+        let mut new_list = Box::new(List::new());
+        for v in old_list.iter_rev() {
+            let obj = match v {
+                ZipListValue::Int(n) => Robj::create_string_object_from_long(n),
+                ZipListValue::Bytes(b) =>
+                    Robj::create_string_object(std::str::from_utf8(b).unwrap()),
+            };
+            new_list.push_front(obj);
+        }
+        match w {
+            ListWhere::Head => new_list.push_front(o),
+            ListWhere::Tail => new_list.push_back(o),
+        }
+        self.ptr = new_list;
+        self.encoding = RobjEncoding::LinkedList;
     }
 
     pub fn list_pop(&mut self, w: ListWhere) -> Option<RobjPtr> {
         if self.encoding == RobjEncoding::ZipList {
-            let mut l = self.ptr.as_mut().zip_list_mut();
+            let mut l = self.ptr.zip_list_mut();
             let node = match w {
                 ListWhere::Head => l.front_mut(),
                 ListWhere::Tail => l.tail_mut(),
@@ -286,7 +343,7 @@ impl Robj {
             node.delete();
             Some(ret)
         } else if self.encoding == RobjEncoding::LinkedList {
-            let mut l = self.ptr.as_mut().linked_list_mut();
+            let mut l = self.ptr.linked_list_mut();
             match w {
                 ListWhere::Head => l.pop_front(),
                 ListWhere::Tail => l.pop_back(),
@@ -295,11 +352,46 @@ impl Robj {
             unreachable!()
         }
     }
+
+    pub fn list_len(&self) -> usize {
+        match self.encoding {
+            RobjEncoding::ZipList => self.ptr.zip_list_ref().len(),
+            RobjEncoding::LinkedList => self.ptr.linked_list_ref().len(),
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn list_index(&self, idx: usize) -> Option<RobjPtr> {
+        match self.encoding {
+            RobjEncoding::LinkedList => {
+                let l = self.ptr.linked_list_ref();
+                if l.len() <= idx {
+                    return None;
+                }
+                let r = l.iter().skip(idx).next().unwrap();
+                Some(Rc::clone(&r))
+            }
+            RobjEncoding::ZipList => {
+                let l = self.ptr.zip_list_ref();
+                if l.len() <= idx {
+                    return None;
+                }
+                let r = match l.iter().skip(idx).next().unwrap() {
+                    ZipListValue::Int(i) =>
+                        Robj::create_string_object_from_long(i),
+                    ZipListValue::Bytes(b) =>
+                        Robj::create_string_object(std::str::from_utf8(b).unwrap()),
+                };
+                Some(r)
+            }
+            _ => unreachable!()
+        }
+    }
 }
 
 impl DictPartialEq for RobjPtr {
     fn eq(&self, other: &Self) -> bool {
-        self.as_ref().borrow().string() == other.as_ref().borrow().string()
+        self.borrow().string() == other.borrow().string()
     }
 }
 
@@ -354,6 +446,12 @@ impl ObjectData for Zset {
     }
 }
 
+impl ObjectData for i64 {
+    fn integer(&self) -> i64 {
+        *self
+    }
+}
+
 
 #[cfg(test)]
 mod test {
@@ -378,13 +476,13 @@ mod test {
     #[test]
     fn object_to_long() {
         let objp = Robj::create_string_object("135");
-        let obj = objp.as_ref().borrow();
+        let obj = objp.borrow();
         if let Err(_) = obj.object_to_long() {
             panic!("fail converting");
         }
 
         let objp = Robj::create_string_object("kmp");
-        let obj = objp.as_ref().borrow();
+        let obj = objp.borrow();
         if let Ok(_) = obj.object_to_long() {
             panic!("not number");
         }
@@ -393,16 +491,16 @@ mod test {
     #[test]
     fn get_string_object_len() {
         let objp = Robj::create_string_object("foobar");
-        assert_eq!(objp.as_ref().borrow().string_object_len(), 6);
+        assert_eq!(objp.borrow().string_object_len(), 6);
     }
 
     #[test]
     fn create_from_number() {
         let objp = Robj::create_string_object_from_long(56);
-        assert_eq!(objp.as_ref().borrow().string(), "56");
+        assert_eq!(objp.borrow().string(), "56");
         let objp = Robj::create_string_object_from_double(3.14);
-        assert_eq!(objp.as_ref().borrow().string(), "3.14");
+        assert_eq!(objp.borrow().string(), "3.14");
         let objp = Robj::create_string_object_from_double(0.0);
-        assert_eq!(objp.as_ref().borrow().string(), "0");
+        assert_eq!(objp.borrow().string(), "0");
     }
 }
