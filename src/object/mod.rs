@@ -450,6 +450,39 @@ impl Robj {
             _ => unreachable!()
         }
     }
+
+    pub fn list_trim(&mut self, start: usize, end: usize) {
+        match self.encoding {
+            RobjEncoding::ZipList => self.zip_list_trim(start, end),
+            RobjEncoding::LinkedList => self.linked_list_trim(start, end),
+            _ => unreachable!()
+        }
+    }
+
+    pub fn zip_list_trim(&mut self, start: usize, end: usize) {
+        if start > end {
+            self.ptr = Box::new(ZipList::new());
+            return;
+        }
+        let l = self.ptr.zip_list_mut();
+        let mut real_end = l.len();
+        for _ in end+1..real_end {
+            l.tail_mut().delete();
+        }
+        l.front_mut().delete_range(start);
+        assert_eq!(l.len(), end - start + 1);
+    }
+
+    pub fn linked_list_trim(&mut self, start: usize, end: usize) {
+        if start > end {
+            self.ptr.linked_list_mut().clear();
+            return;
+        }
+        let l = self.ptr.linked_list_mut();
+        l.split_off(end + 1);
+        let tmp = l.split_off(start);
+        self.ptr = Box::new(tmp);
+    }
 }
 
 impl DictPartialEq for RobjPtr {

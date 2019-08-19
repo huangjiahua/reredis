@@ -432,6 +432,7 @@ pub fn lset_command(
             }
         }
     }
+    server.dirty += 1;
 }
 
 pub fn lrange_command(
@@ -468,16 +469,24 @@ pub fn lrange_command(
 
     let len = o.borrow().list_len();
 
-    let (left, mut right) = (real_list_index(left, len),
+    let (mut left, mut right) = (real_list_index(left, len),
                              real_list_index(right, len));
 
-    if left < 0 || right < 0 || left as usize >= len || left > right {
+    if (left < 0 && right < 0) || (left >= 0 && left as usize >= len) || left > right {
         client.add_reply(shared_object!(EMPTY_MULTI_BULK));
         return;
     }
 
+    if left < 0 {
+        left = 0;
+    }
+
+    if right >= len as i64 {
+        right = len as i64 - 1;
+    }
+
     client.add_str_reply(
-        &format!("*{}\r\n", min(right - left + 1, len as i64 - left))
+        &format!("*{}\r\n", right - left + 1)
     );
 
     for r in o.borrow().list_iter().skip(left as usize) {
@@ -487,6 +496,61 @@ pub fn lrange_command(
             break;
         }
     }
+}
+
+pub fn ltrim_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let db = &mut server.db[client.db_idx];
+
+    let (left, right)
+        = (client.argv[2].borrow().object_to_long(),
+           client.argv[3].borrow().object_to_long());
+
+    if left.is_err() || right.is_err() {
+        client.add_str_reply("-ERR value is not an integer or out of range\r\n");
+        return;
+    }
+
+    let (left, right) = (left.unwrap(), right.unwrap());
+
+    let o = match db.look_up_key_read(&client.argv[1]) {
+        None => {
+            client.add_reply(shared_object!(EMPTY_MULTI_BULK));
+            return;
+        }
+        Some(obj) => {
+            if obj.borrow().object_type() != RobjType::List {
+                client.add_reply(shared_object!(WRONG_TYPE));
+                return;
+            }
+            obj
+        }
+    };
+
+    let len = o.borrow().list_len();
+
+    let (mut left, mut right) =
+        (real_list_index(left, len), real_list_index(right, len));
+
+    if left > right || right < 0 || left >= len as i64 {
+        o.borrow_mut().list_trim(len, len - 1);
+    } else {
+        if left < 0 {
+            left = 0;
+        }
+        if right >= len as i64 {
+            right = len as i64 - 1;
+        }
+        o.borrow_mut().list_trim(left as usize, right as usize);
+    }
+    if o.borrow().list_len() == 0 {
+        db.delete_key(&client.argv[1]);
+    }
+    client.add_reply(shared_object!(OK));
+    server.dirty += 1;
 }
 
 pub fn incr_by_command(
@@ -661,6 +725,7 @@ const CMD_TABLE: &[Command] = &[
     Command { name: "lindex", proc: lindex_command, arity: 3, flags: CMD_INLINE },
     Command { name: "lset", proc: lset_command, arity: 4, flags: CMD_INLINE },
     Command { name: "lrange", proc: lrange_command, arity: 4, flags: CMD_INLINE },
+    Command { name: "ltrim", proc: ltrim_command, arity: 4, flags: CMD_INLINE },
     // TODO
     Command { name: "incrby", proc: incr_by_command, arity: 3, flags: CMD_INLINE },
     Command { name: "decrby", proc: decr_by_command, arity: 3, flags: CMD_INLINE },
