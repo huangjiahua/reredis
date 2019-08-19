@@ -1,11 +1,12 @@
+use std::mem::swap;
+use std::rc::Rc;
+use std::cmp::min;
 use crate::client::Client;
 use crate::server::Server;
 use crate::ae::AeEventLoop;
-use std::rc::Rc;
-use crate::shared::{OK, NULL_BULK, CRLF, CZERO, CONE, COLON, WRONG_TYPE, PONG};
+use crate::shared::{OK, NULL_BULK, CRLF, CZERO, CONE, COLON, WRONG_TYPE, PONG, EMPTY_MULTI_BULK};
 use crate::util::case_eq;
 use crate::object::{Robj, RobjPtr, RobjEncoding, RobjType};
-use std::mem::swap;
 use crate::object::list::ListWhere;
 use crate::object::RobjType::List;
 
@@ -374,14 +375,7 @@ pub fn lindex_command(
                 client.add_reply(shared_object!(WRONG_TYPE));
             } else {
                 let len = o.borrow().list_len();
-                let real_idx = if idx >= 0 {
-                    idx
-                } else {
-                    // this won't overflow because
-                    // it is not possible for len to be
-                    // more that usize MAX
-                    len as i64 + idx
-                };
+                let real_idx = real_list_index(idx, len);
 
                 if real_idx < 0 {
                     client.add_reply(shared_object!(NULL_BULK));
@@ -395,6 +389,102 @@ pub fn lindex_command(
                     }
                 }
             }
+        }
+    }
+}
+
+pub fn lset_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let db = &mut server.db[client.db_idx];
+
+    let to_int = client.argv[2].borrow().object_to_long();
+
+    let idx = match to_int {
+        Ok(i) => i,
+        Err(_) => {
+            client.add_str_reply("-ERR value is not an integer or out of range\r\n");
+            return;
+        }
+    };
+
+    match db.look_up_key_read(&client.argv[1]) {
+        None => client.add_str_reply("-ERR no such key\r\n"),
+        Some(o) => {
+            if o.borrow().object_type() != RobjType::List {
+                client.add_reply(shared_object!(WRONG_TYPE));
+            } else {
+                let len = o.borrow().list_len();
+                let real_idx = real_list_index(idx, len);
+
+                if real_idx < 0 {
+                    client.add_str_reply("-ERR index out of range\r\n");
+                    return;
+                }
+
+                match o.borrow_mut()
+                    .list_set(real_idx as usize, Rc::clone(&client.argv[3])) {
+                    Ok(_) => client.add_reply(shared_object!(OK)),
+                    Err(_) => client.add_str_reply("-ERR index out of range\r\n"),
+                }
+            }
+        }
+    }
+}
+
+pub fn lrange_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let db = &mut server.db[client.db_idx];
+
+    let (left, right)
+        = (client.argv[2].borrow().object_to_long(),
+           client.argv[3].borrow().object_to_long());
+
+    if left.is_err() || right.is_err() {
+        client.add_str_reply("-ERR value is not an integer or out of range\r\n");
+        return;
+    }
+
+    let (left, right) = (left.unwrap(), right.unwrap());
+
+    let o = match db.look_up_key_read(&client.argv[1]) {
+        None => {
+            client.add_reply(shared_object!(EMPTY_MULTI_BULK));
+            return;
+        }
+        Some(obj) => {
+            if obj.borrow().object_type() != RobjType::List {
+                client.add_reply(shared_object!(WRONG_TYPE));
+                return;
+            }
+            obj
+        }
+    };
+
+    let len = o.borrow().list_len();
+
+    let (left, mut right) = (real_list_index(left, len),
+                             real_list_index(right, len));
+
+    if left < 0 || right < 0 || left as usize >= len || left > right {
+        client.add_reply(shared_object!(EMPTY_MULTI_BULK));
+        return;
+    }
+
+    client.add_str_reply(
+        &format!("*{}\r\n", min(right - left + 1, len as i64 - left))
+    );
+
+    for r in o.borrow().list_iter().skip(left as usize) {
+        add_single_reply(client, r);
+        right -= 1;
+        if right < left {
+            break;
         }
     }
 }
@@ -546,6 +636,14 @@ fn add_single_reply(c: &mut Client, o: RobjPtr) {
     c.add_reply(shared_object!(CRLF));
 }
 
+fn real_list_index(idx: i64, len: usize) -> i64 {
+    if idx >= 0 {
+        idx
+    } else {
+        len as i64 + idx
+    }
+}
+
 const CMD_TABLE: &[Command] = &[
     Command { name: "get", proc: get_command, arity: 2, flags: CMD_INLINE },
     Command { name: "set", proc: set_command, arity: 3, flags: CMD_INLINE },
@@ -561,6 +659,8 @@ const CMD_TABLE: &[Command] = &[
     Command { name: "rpop", proc: rpop_command, arity: 2, flags: CMD_INLINE },
     Command { name: "llen", proc: llen_command, arity: 2, flags: CMD_INLINE },
     Command { name: "lindex", proc: lindex_command, arity: 3, flags: CMD_INLINE },
+    Command { name: "lset", proc: lset_command, arity: 4, flags: CMD_INLINE },
+    Command { name: "lrange", proc: lrange_command, arity: 4, flags: CMD_INLINE },
     // TODO
     Command { name: "incrby", proc: incr_by_command, arity: 3, flags: CMD_INLINE },
     Command { name: "decrby", proc: decr_by_command, arity: 3, flags: CMD_INLINE },

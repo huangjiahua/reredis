@@ -387,6 +387,69 @@ impl Robj {
             _ => unreachable!()
         }
     }
+
+    pub fn list_set(&mut self, idx: usize, o: RobjPtr) -> Result<(), ()> {
+        match self.encoding {
+            RobjEncoding::LinkedList => self.linked_list_set(idx, o),
+            RobjEncoding::ZipList => self.zip_list_set(idx, o),
+            _ => unreachable!()
+        }
+    }
+
+    fn linked_list_set(&mut self, idx: usize, o: RobjPtr) -> Result<(), ()> {
+        let mut l = self.ptr.linked_list_mut();
+
+        if l.len() <= idx {
+            return Err(());
+        }
+
+        let mut tmp = l.split_off(idx);
+        tmp.pop_front();
+        tmp.push_front(o);
+
+        l.append(&mut tmp);
+        assert_eq!(tmp.len(), 0);
+
+        Ok(())
+    }
+
+    fn zip_list_set(&mut self, idx: usize, o: RobjPtr) -> Result<(), ()> {
+        let mut l = self.ptr.zip_list_mut();
+
+        if l.len() <= idx {
+            return Err(());
+        }
+
+        let mut node = l.front_mut();
+        for i in 0..idx {
+            node = node.move_next();
+        }
+
+        node = node.delete();
+        node.insert(o.borrow().string().as_bytes());
+        Ok(())
+    }
+
+    pub fn list_iter<'a>(&'a self) -> Box<dyn Iterator<Item=RobjPtr> + 'a> {
+        match self.encoding {
+            RobjEncoding::ZipList => {
+                let l = self.ptr.zip_list_ref();
+                Box::new(l.iter()
+                    .map(|x| match x {
+                        ZipListValue::Int(i) =>
+                            Robj::create_string_object_from_long(i),
+                        ZipListValue::Bytes(b) =>
+                            Robj::create_string_object(std::str::from_utf8(b).unwrap())
+                    }))
+            }
+            RobjEncoding::LinkedList => {
+                let l = self.ptr.linked_list_ref();
+                Box::new(l.iter()
+                    .map(|x| Rc::clone(x)))
+            }
+            _ => unreachable!()
+        }
+    }
 }
 
 impl DictPartialEq for RobjPtr {
