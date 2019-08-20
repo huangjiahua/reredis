@@ -457,8 +457,14 @@ impl<'a> ZipListNodeMut<'a> {
                 break;
             }
             if f(&self.value()) {
-                self = self.delete().move_prev();
+                self = self.delete();
                 n -= 1;
+                if self.at_begin() {
+                    break;
+                }
+                if self.at_end() {
+                    self = self.list.tail_mut();
+                }
             } else {
                 if self.at_begin() {
                     break;

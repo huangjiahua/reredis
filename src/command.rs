@@ -553,6 +553,52 @@ pub fn ltrim_command(
     server.dirty += 1;
 }
 
+pub fn lrem_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let db = &mut server.db[client.db_idx];
+
+    let to_int = client.argv[2].borrow().object_to_long();
+    let i = match to_int {
+        Err(_) => {
+            client.add_str_reply("-ERR value is not an integer or out of range\r\n");
+            return;
+        }
+        Ok(i) => i,
+    };
+
+    let o = match db.look_up_key_read(&client.argv[1]) {
+        None => {
+            client.add_reply(shared_object!(CZERO));
+            return;
+        }
+        Some(obj) => {
+            if obj.borrow().object_type() != RobjType::List {
+                client.add_reply(shared_object!(WRONG_TYPE));
+                return;
+            }
+            obj
+        }
+    };
+
+    let (n, w) = if i < 0 {
+        (-i as usize, ListWhere::Tail)
+    } else if i == 0 {
+        (o.borrow().list_len(), ListWhere::Head)
+    } else {
+        (i as usize, ListWhere::Head)
+    };
+
+    let n = o.borrow_mut().list_del_n(w, n, &client.argv[3]);
+    if o.borrow().list_len() == 0 {
+        let _ = db.delete_key(&client.argv[1]);
+    }
+    server.dirty += 1;
+    client.add_reply(gen_usize_reply(n));
+}
+
 pub fn incr_by_command(
     client: &mut Client,
     server: &mut Server,
@@ -726,6 +772,7 @@ const CMD_TABLE: &[Command] = &[
     Command { name: "lset", proc: lset_command, arity: 4, flags: CMD_INLINE },
     Command { name: "lrange", proc: lrange_command, arity: 4, flags: CMD_INLINE },
     Command { name: "ltrim", proc: ltrim_command, arity: 4, flags: CMD_INLINE },
+    Command { name: "lrem", proc: lrem_command, arity: 4, flags: CMD_INLINE },
     // TODO
     Command { name: "incrby", proc: incr_by_command, arity: 3, flags: CMD_INLINE },
     Command { name: "decrby", proc: decr_by_command, arity: 3, flags: CMD_INLINE },

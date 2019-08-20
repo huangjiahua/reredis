@@ -480,7 +480,7 @@ impl Robj {
         self.ptr = Box::new(tmp);
     }
 
-    pub fn list_del_n(&mut self, w: ListWhere, n: usize, o: &RobjPtr) {
+    pub fn list_del_n(&mut self, w: ListWhere, n: usize, o: &RobjPtr) -> usize {
         match self.encoding {
             RobjEncoding::ZipList => self.zip_list_del_n(w, n, o),
             RobjEncoding::LinkedList => self.linked_list_del_n(w, n, o),
@@ -488,10 +488,11 @@ impl Robj {
         }
     }
 
-    fn zip_list_del_n(&mut self, w: ListWhere, n: usize, o: &RobjPtr) {
+    fn zip_list_del_n(&mut self, w: ListWhere, n: usize, o: &RobjPtr) -> usize {
         let l = self.ptr.zip_list_mut();
-        if l.len() == 0 {
-            return;
+        let len = l.len();
+        if len == 0 {
+            return 0;
         }
 
         let tmp = o.borrow();
@@ -512,12 +513,14 @@ impl Robj {
             ListWhere::Head => l.front_mut().delete_first_n_filter(n, f),
             ListWhere::Tail => l.tail_mut().delete_last_n_filter(n, f),
         };
+        len - l.len()
     }
 
-    fn linked_list_del_n(&mut self, w: ListWhere, n: usize, o: &RobjPtr) {
+    fn linked_list_del_n(&mut self, w: ListWhere, n: usize, o: &RobjPtr) -> usize {
         let l = self.ptr.linked_list_mut();
-        if l.len() == 0 {
-            return;
+        let len = l.len();
+        if len == 0 {
+            return 0;
         }
 
         let tmp = o.borrow();
@@ -531,6 +534,7 @@ impl Robj {
             ListWhere::Head => l.delete_first_n_filter(n, f),
             ListWhere::Tail => l.delete_last_n_filter(n, f),
         }
+        len - l.len()
     }
 }
 
