@@ -2,7 +2,6 @@ use std::rc::{Rc, Weak};
 use crate::object::{RobjPtr, Robj, RobjType, Sds};
 use rand::prelude::*;
 use std::iter::Skip;
-use core::borrow::{Borrow, BorrowMut};
 use std::cell::{Ref, RefCell};
 use std::ops::Range;
 use std::iter::Iterator;
@@ -81,7 +80,6 @@ impl Iterator for SkipListNextNodeIter {
         }
         let ret = Rc::clone(&self.next.as_ref().unwrap());
         let this_node = ret
-            .as_ref()
             .borrow();
         let forward = this_node
             .level[self.level]
@@ -154,16 +152,16 @@ impl SkipList {
                 rank[i + 1]
             };
 
-            let mut span = x.as_ref().borrow().level[i].span;
-            for node in x.clone().as_ref().borrow().iter(i) {
-                let inner = node.as_ref().borrow();
-                let inner_obj = inner.obj_ref().as_ref().borrow();
+            let mut span = x.borrow().level[i].span;
+            for node in x.clone().borrow().iter(i) {
+                let inner = node.borrow();
+                let inner_obj = inner.obj_ref().borrow();
                 if inner.score > score || (inner.score == score &&
-                    inner_obj.string() >= obj.as_ref().borrow().string()) {
+                    inner_obj.string() >= obj.borrow().string()) {
                     break;
                 }
                 rank[i] += span;
-                span = node.as_ref().borrow().level[i].span;
+                span = node.borrow().level[i].span;
                 x = Rc::clone(&node);
             }
 
@@ -236,8 +234,8 @@ impl SkipList {
         let mut x = Rc::clone(&self.header);
 
         for i in (0..self.level).rev() {
-            for node in x.clone().as_ref().borrow().iter(i) {
-                let score = node.as_ref().borrow().score;
+            for node in x.clone().borrow().iter(i) {
+                let score = node.borrow().score;
                 if RangeSpec::value_gte_min(score, &range) {
                     break;
                 }
@@ -254,7 +252,7 @@ impl SkipList {
                           .unwrap() // this is an inner range, so the next cannot be None
         );
 
-        let score = x.as_ref().borrow().score;
+        let score = x.borrow().score;
         if !RangeSpec::value_lte_max(score, &range) {
             return None;
         }
@@ -270,8 +268,8 @@ impl SkipList {
         let mut x = Rc::clone(&self.header);
 
         for i in (0..self.level).rev() {
-            for node in x.clone().as_ref().borrow().iter(i) {
-                let score = node.as_ref().borrow().score;
+            for node in x.clone().borrow().iter(i) {
+                let score = node.borrow().score;
                 if !RangeSpec::value_lte_max(score, &range) {
                     break;
                 }
@@ -279,7 +277,7 @@ impl SkipList {
             }
         }
 
-        let score = x.as_ref().borrow().score;
+        let score = x.borrow().score;
         if !RangeSpec::value_gte_min(score, &range) {
             return None;
         }
@@ -294,11 +292,11 @@ impl SkipList {
         let mut x = Rc::clone(&self.header);
 
         for i in (0..self.level).rev() {
-            for node in x.clone().as_ref().borrow().iter(i) {
-                let inner = node.as_ref().borrow();
-                let inner_obj = inner.obj_ref().as_ref().borrow();
+            for node in x.clone().borrow().iter(i) {
+                let inner = node.borrow();
+                let inner_obj = inner.obj_ref().borrow();
                 if inner.score > score || (inner.score == score &&
-                    inner_obj.string() >= obj.as_ref().borrow().string()) {
+                    inner_obj.string() >= obj.borrow().string()) {
                     break;
                 }
 
@@ -307,10 +305,10 @@ impl SkipList {
             update[i] = Some(Rc::clone(&x));
         }
 
-        let x = x.as_ref().borrow().iter(0).next();
+        let x = x.borrow().iter(0).next();
         if let Some(e) = x {
-            if e.as_ref().borrow().score == score
-                && Robj::string_obj_eq(e.as_ref().borrow().obj_ref(), obj) {
+            if e.borrow().score == score
+                && Robj::string_obj_eq(e.borrow().obj_ref(), obj) {
                 self.delete_node(&e, &update);
                 return true;
             }
@@ -320,7 +318,7 @@ impl SkipList {
 
     fn delete_node(&mut self, node: &Rc<RefCell<SkipListNode>>,
                    update: &Vec<Option<Rc<RefCell<SkipListNode>>>>) {
-        let this_node = node.as_ref().borrow();
+        let this_node = node.borrow();
         for i in 0..self.level {
             let mut up = update[i].as_ref().unwrap().as_ref().borrow_mut();
             let up_next = up.level[i].forward.as_ref();
@@ -351,7 +349,7 @@ impl SkipList {
         }
 
         while self.level > 1 &&
-            self.header.as_ref().borrow().level[self.level - 1].forward.is_none() {
+            self.header.borrow().level[self.level - 1].forward.is_none() {
             self.level -= 1;
         }
         self.length -= 1;
@@ -393,7 +391,7 @@ impl SkipList {
     }
 
     pub fn lowest_score(&self) -> Option<f64> {
-        match self.header.as_ref().borrow().level[0].forward {
+        match self.header.borrow().level[0].forward {
             None => None,
             Some(_) => Some(self.header
                 .as_ref()
@@ -515,7 +513,7 @@ mod test {
         let node =
             list.first_in_range(&RangeSpec::new_closed(1.0, 2.2))
                 .unwrap();
-        assert_eq!(node.as_ref().borrow().score, 2.1);
+        assert_eq!(node.borrow().score, 2.1);
     }
 
     #[test]
@@ -531,7 +529,7 @@ mod test {
         let node =
             list.last_in_range(&RangeSpec::new_closed(1.0, 2.2))
                 .unwrap();
-        assert_eq!(node.as_ref().borrow().score, 2.1);
+        assert_eq!(node.borrow().score, 2.1);
 
         let node =
             list.last_in_range(&RangeSpec::new_open(0.0, 0.2));
@@ -550,11 +548,11 @@ mod test {
 
         let range = RangeSpec::new_closed(0.2, 2.1);
         let node = list.first_in_range(&range).unwrap();
-        assert_eq!(node.as_ref().borrow().score, 0.2);
-        assert_eq!(node.as_ref().borrow().obj_ref().as_ref().borrow().string(), "bar");
+        assert_eq!(node.borrow().score, 0.2);
+        assert_eq!(node.borrow().obj_ref().borrow().string(), "bar");
         list.delete(0.2, &o2);
         let node = list.first_in_range(&range).unwrap();
-        assert_eq!(node.as_ref().borrow().score, 2.1);
+        assert_eq!(node.borrow().score, 2.1);
     }
 }
 
