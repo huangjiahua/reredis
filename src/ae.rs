@@ -65,7 +65,7 @@ impl Fdp {
     }
 }
 
-fn default_ae_time_proc(server: &mut Server, el: &mut AeEventLoop, id: i64, data: &ClientData) -> i32 { 1 }
+fn _default_ae_time_proc(server: &mut Server, el: &mut AeEventLoop, id: i64, data: &ClientData) -> i32 { 1 }
 
 pub fn default_ae_file_proc(server: &mut Server, el: &mut AeEventLoop, fd: &Fd, data: &ClientData, mask: i32) {}
 
@@ -346,7 +346,7 @@ struct AeTimeEvent {
 }
 
 
-fn ae_wait(fd: &Fd, mask: i32, duration: Duration) -> Result<i32, Box<dyn Error>> {
+fn _ae_wait(fd: &Fd, mask: i32, duration: Duration) -> Result<i32, Box<dyn Error>> {
     let poll = Poll::new()?;
     let mut ready: Ready = Ready::empty();
     let ret_mask: i32 = 0;

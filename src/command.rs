@@ -321,7 +321,7 @@ fn pop_generic_command(
 
     let o = list_obj.borrow_mut().list_pop(w);
     if list_obj.borrow().list_len() == 0 {
-        db.delete_key(&client.argv[1]);
+        let _ = db.delete_key(&client.argv[1]);
     }
 
     match o {
@@ -547,7 +547,7 @@ pub fn ltrim_command(
         o.borrow_mut().list_trim(left as usize, right as usize);
     }
     if o.borrow().list_len() == 0 {
-        db.delete_key(&client.argv[1]);
+        let _ = db.delete_key(&client.argv[1]);
     }
     client.add_reply(shared_object!(OK));
     server.dirty += 1;

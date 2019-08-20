@@ -39,7 +39,7 @@ impl Encoding {
     }
 
     fn is_int(&self) -> bool {
-            !self.is_str()
+        !self.is_str()
     }
 
     fn blob_len(&self) -> usize {
@@ -306,14 +306,14 @@ pub enum ZipListValue<'a> {
 impl<'a> ZipListValue<'a> {
     fn unwrap_bytes(&self) -> &'a [u8] {
         match self {
-            ZipListValue::Bytes(s) => *s,
+            Self::Bytes(s) => *s,
             _ => panic!("fail unwrapping to bytes"),
         }
     }
 
     fn unwrap_int(&self) -> i64 {
         match self {
-            ZipListValue::Int(k) => *k,
+            Self::Int(k) => *k,
             _ => panic!("fail unwrapping to int"),
         }
     }
@@ -431,6 +431,41 @@ impl<'a> ZipListNodeMut<'a> {
             panic!("can't move_prev at the begin of zip_list")
         }
         self.off -= decode_prev_length(&self.list.0[self.off..]);
+        self
+    }
+
+    pub fn delete_first_n_filter<F>(mut self, mut n: usize, f: F) -> ZipListNodeMut<'a>
+        where F: Fn(&ZipListValue) -> bool {
+        while !self.at_end() {
+            if f(&self.value()) {
+                self = self.delete();
+                n -= 1;
+            } else {
+                self = self.move_next();
+            }
+            if n == 0 {
+                break;
+            }
+        }
+        self
+    }
+
+    pub fn delete_last_n_filter<F>(mut self, mut n: usize, f: F) -> ZipListNodeMut<'a>
+        where F: Fn(&ZipListValue) -> bool {
+        loop {
+            if n == 0 {
+                break;
+            }
+            if f(&self.value()) {
+                self = self.delete().move_prev();
+                n -= 1;
+            } else {
+                if self.at_begin() {
+                    break;
+                }
+                self = self.move_prev();
+            }
+        }
         self
     }
 }

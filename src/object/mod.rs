@@ -5,6 +5,7 @@ pub mod skip_list;
 pub mod int_set;
 pub mod zip_list;
 pub mod zset;
+pub mod linked_list;
 
 
 use std::time::SystemTime;
@@ -403,12 +404,7 @@ impl Robj {
             return Err(());
         }
 
-        let mut tmp = l.split_off(idx);
-        tmp.pop_front();
-        tmp.push_front(o);
-
-        l.append(&mut tmp);
-        assert_eq!(tmp.len(), 0);
+        l.set_off(idx, o);
 
         Ok(())
     }
@@ -466,7 +462,7 @@ impl Robj {
         }
         let l = self.ptr.zip_list_mut();
         let mut real_end = l.len();
-        for _ in end+1..real_end {
+        for _ in end + 1..real_end {
             l.tail_mut().delete();
         }
         l.front_mut().delete_range(start);
@@ -482,6 +478,59 @@ impl Robj {
         l.split_off(end + 1);
         let tmp = l.split_off(start);
         self.ptr = Box::new(tmp);
+    }
+
+    pub fn list_del_n(&mut self, w: ListWhere, n: usize, o: &RobjPtr) {
+        match self.encoding {
+            RobjEncoding::ZipList => self.zip_list_del_n(w, n, o),
+            RobjEncoding::LinkedList => self.linked_list_del_n(w, n, o),
+            _ => unreachable!()
+        }
+    }
+
+    fn zip_list_del_n(&mut self, w: ListWhere, n: usize, o: &RobjPtr) {
+        let l = self.ptr.zip_list_mut();
+        if l.len() == 0 {
+            return;
+        }
+
+        let tmp = o.borrow();
+        let s = tmp.string();
+
+        let f = |val: &ZipListValue| -> bool {
+            match val {
+                ZipListValue::Int(i) => {
+                    s == format!("{}", *i)
+                }
+                ZipListValue::Bytes(b) => {
+                    s == std::str::from_utf8(*b).unwrap()
+                }
+            }
+        };
+
+        match w {
+            ListWhere::Head => l.front_mut().delete_first_n_filter(n, f),
+            ListWhere::Tail => l.tail_mut().delete_last_n_filter(n, f),
+        };
+    }
+
+    fn linked_list_del_n(&mut self, w: ListWhere, n: usize, o: &RobjPtr) {
+        let l = self.ptr.linked_list_mut();
+        if l.len() == 0 {
+            return;
+        }
+
+        let tmp = o.borrow();
+        let s = tmp.string();
+
+        let f = |obj: &RobjPtr| -> bool {
+            return obj.borrow().string() == s;
+        };
+
+        match w {
+            ListWhere::Head => l.delete_first_n_filter(n, f),
+            ListWhere::Tail => l.delete_last_n_filter(n, f),
+        }
     }
 }
 
