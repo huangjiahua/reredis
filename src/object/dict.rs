@@ -1,4 +1,3 @@
-use core::borrow::Borrow;
 use std::ops::IndexMut;
 
 const DICT_HT_INITIAL_SIZE: usize = 4;
@@ -505,7 +504,7 @@ impl<K, V> Dict<K, V>
     }
 
     fn hash_value(&self, key: &K) -> usize {
-        self.hash.borrow()(key, self.hash_seed)
+        (&self.hash)(key, self.hash_seed)
     }
 
     fn rehash_step_if_needed(&mut self) {
@@ -626,7 +625,7 @@ mod test {
     #[test]
     fn create_a_hash_dict() {
         let hd: Dict<usize, usize> = Dict::new(int_hash_func, 0);
-        let f = hd.hash.borrow();
+        let f = &hd.hash;
         assert_eq!(f(&1, 0), 1);
         assert_eq!(hd.iterators, 0);
         assert_eq!(hd.rehash_idx, -1);

@@ -8,7 +8,6 @@ use crate::protocol;
 use std::error::Error;
 use std::fmt::Display;
 use crate::server::Server;
-use std::borrow::Borrow;
 use mio::net::TcpStream;
 use crate::command::{lookup_command, CMD_BULK};
 use crate::util::*;
@@ -59,7 +58,7 @@ impl Client {
             db_idx: 0,
         }));
         el.create_file_event(
-            Rc::clone(&client.as_ref().borrow().fd),
+            Rc::clone(&client.borrow().fd),
             AE_READABLE | AE_WRITABLE,
             read_query_from_client,
             send_reply_to_client,
@@ -97,12 +96,12 @@ impl Client {
         assert!(!self.argv.is_empty());
         // TODO: free memory if needed
 
-        if case_eq(self.argv[0].as_ref().borrow().string(), "quit") {
+        if case_eq(self.argv[0].borrow().string(), "quit") {
             return Err(CommandError::Quit);
         }
 
         let cmd = lookup_command(
-            self.argv[0].as_ref().borrow().string(),
+            self.argv[0].borrow().string(),
         );
         let cmd = match cmd {
             None => {
@@ -130,7 +129,7 @@ impl Client {
         // TODO: authenticate
 
         // TODO: save server dirty bit and tackle problems with slave server ans monitors
-        cmd.proc.borrow()(self, server, el);
+        (&cmd.proc)(self, server, el);
 
         server.stat_num_commands += 1;
 

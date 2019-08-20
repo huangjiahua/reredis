@@ -1,5 +1,4 @@
 use mio::*;
-use std::borrow::Borrow;
 use std::time::{SystemTime, Duration};
 use std::ops::Add;
 use std::error::Error;
@@ -140,7 +139,7 @@ impl AeEventLoop {
             if self.file_events[i].is_none() &&
                 self.occupied.map(|x| x != i).unwrap_or(true) {
                 self.poll.register(
-                    fe.fd.as_ref().borrow().to_evented(),
+                    fe.fd.borrow().to_evented(),
                     Token(i),
                     Self::readiness(mask),
                     PollOpt::level(),
@@ -278,11 +277,11 @@ impl AeEventLoop {
 
                 if (fe.mask & AE_READABLE != 0) && event.readiness().is_readable() {
                     r_fired = true;
-                    fe.r_file_proc.borrow()(server, self, &fe.fd, &fe.client_data, fe.mask);
+                    (&fe.r_file_proc)(server, self, &fe.fd, &fe.client_data, fe.mask);
                 }
                 if (fe.mask & AE_WRITABLE != 0) && event.readiness().is_writable() {
                     if !r_fired {
-                        fe.w_file_proc.borrow()(server, self, &fe.fd, &fe.client_data, fe.mask);
+                        (&fe.w_file_proc)(server, self, &fe.fd, &fe.client_data, fe.mask);
                     }
                 }
 
@@ -308,7 +307,7 @@ impl AeEventLoop {
             if curr > te.when {
                 let id = te.id;
                 let retval
-                    = te.time_proc.borrow()(server, self, id, &te.client_data);
+                    = (&te.time_proc)(server, self, id, &te.client_data);
                 if retval != -1 {
                     te.when = te.when.add(Duration::from_millis(retval as u64));
                 }
@@ -359,7 +358,7 @@ fn ae_wait(fd: &Fd, mask: i32, duration: Duration) -> Result<i32, Box<dyn Error>
     }
     // TODO: exception?
 
-    poll.register(fd.as_ref().borrow().to_evented(), Token(0), ready, PollOpt::edge())?;
+    poll.register(fd.borrow().to_evented(), Token(0), ready, PollOpt::edge())?;
     let mut events = Events::with_capacity(1);
 
     poll.poll(&mut events, Some(duration))?;

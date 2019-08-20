@@ -1,5 +1,4 @@
 use crate::server::Server;
-use std::borrow::{BorrowMut, Borrow};
 use std::error::Error;
 use crate::ae::{AE_READABLE, default_ae_event_finalizer_proc, AeEventLoop, Fd, Fdp, default_ae_file_proc, AE_WRITABLE};
 use std::rc::Rc;
@@ -100,7 +99,7 @@ pub fn accept_handler(
     data: &ClientData,
     mask: i32,
 ) {
-    let fd = fd.as_ref().borrow();
+    let fd = fd.borrow();
     let listener = fd.unwrap_listener();
 
     debug!("ready to accept");
