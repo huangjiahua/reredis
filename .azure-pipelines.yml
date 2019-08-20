@@ -4,7 +4,9 @@ pool:
 steps:
   - script: |
       curl https://sh.rustup.rs -sSf | sh
+      rustup install 1.37.0
       echo "##vso[task.setvariable variable=PATH;]$PATH:$HOME/.cargo/bin"
+      echo $(rustc --version)
     displayName: Install rust
   - script: cargo build --all
     displayName: Cargo build
