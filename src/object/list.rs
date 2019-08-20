@@ -1,5 +1,5 @@
-use std::collections::LinkedList;
 use crate::object::{Sds, ObjectData, RobjPtr};
+use crate::object::linked_list::LinkedList;
 
 pub type List = LinkedList<RobjPtr>;
 
