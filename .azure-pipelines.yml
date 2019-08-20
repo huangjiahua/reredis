@@ -4,7 +4,7 @@ pool:
 steps:
   - script: |
       curl https://sh.rustup.rs -sSf | sh
-      rustup install 1.37.0
+      rustup update stable
       echo "##vso[task.setvariable variable=PATH;]$PATH:$HOME/.cargo/bin"
       echo $(rustc --version)
     displayName: Install rust
