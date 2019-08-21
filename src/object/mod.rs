@@ -48,30 +48,20 @@ pub enum RobjEncoding {
 }
 
 pub trait ObjectData {
-    fn bytes_ref(&self) -> &[u8] {
-        panic!("This is not a byte slice");
-    }
-    fn sds_ref(&self) -> &str {
-        panic!("This is not an Sds string");
-    }
-    fn integer(&self) -> i64 {
-        panic!("This is not an integer");
-    }
-    fn linked_list_ref(&self) -> &List {
-        panic!("This is not a List");
-    }
-    fn linked_list_mut(&mut self) -> &mut List {
-        panic!("This is not a List");
-    }
+    fn bytes_ref(&self) -> &[u8] { panic!("This is not a byte slice"); }
+    fn sds_ref(&self) -> &str { panic!("This is not an Sds string"); }
+    fn integer(&self) -> i64 { panic!("This is not an integer"); }
+    fn linked_list_ref(&self) -> &List { panic!("This is not a List"); }
+    fn linked_list_mut(&mut self) -> &mut List { panic!("This is not a List"); }
     fn set_ref(&self) -> &Set { panic!("This is not a Set"); }
-    fn zip_list_ref(&self) -> &ZipList {
-        panic!("This is not a ZipList");
-    }
-    fn zip_list_mut(&mut self) -> &mut ZipList {
-        panic!("This is not a ZipList");
-    }
+    fn set_mut(&mut self) -> &mut Set { panic!("This is not a Set"); }
+    fn zip_list_ref(&self) -> &ZipList { panic!("This is not a ZipList"); }
+    fn zip_list_mut(&mut self) -> &mut ZipList { panic!("This is not a ZipList"); }
     fn hash_table_ref(&self) -> &Dict<RobjPtr, RobjPtr> { panic!("This is not a hash table"); }
     fn int_set_ref(&self) -> &IntSet { panic!("This is not an IntSet"); }
+    fn int_set_mut(&mut self) -> &mut IntSet { panic!("This is not an IntSet"); }
+    fn set_wrapper_ref(&self) -> &dyn SetWrapper { panic!("This is not as SetWrapper") }
+    fn set_wrapper_mut(&mut self) -> &mut dyn SetWrapper { panic!("This is not as SetWrapper") }
     fn zset_ref(&self) -> &Zset { panic!("This is not a Zset"); }
 }
 
@@ -83,6 +73,10 @@ pub struct Robj {
     encoding: RobjEncoding,
     lru: SystemTime,
     ptr: Pointer,
+}
+
+trait SetWrapper {
+    fn sw_len(&self) -> usize;
 }
 
 impl Robj {
@@ -556,6 +550,55 @@ impl Robj {
         }
         len - l.len()
     }
+
+    pub fn is_set(&self) -> bool {
+        match self.obj_type {
+            RobjType::Set => true,
+            _ => false,
+        }
+    }
+
+    pub fn set_len(&self) -> usize {
+        self.ptr.set_wrapper_ref().sw_len()
+    }
+
+    pub fn set_add(&mut self, o: RobjPtr) -> Result<(), ()> {
+        match self.encoding {
+            RobjEncoding::Ht => {
+                let set = self.ptr.set_mut();
+                let o = if o.borrow().encoding == RobjEncoding::Int {
+                    o.borrow().gen_string()
+                } else {
+                    o
+                };
+                set.add(o, ())
+            }
+            RobjEncoding::IntSet => {
+                if o.borrow().encoding != RobjEncoding::Int {
+                    self.set_update_add(o)
+                } else {
+                    let set = self.ptr.int_set_mut();
+                    set.add(o.borrow().integer())
+                }
+            }
+            _ => unreachable!()
+        }
+    }
+
+    pub fn set_update_add(&mut self, o: RobjPtr) -> Result<(), ()> {
+        let mut num: u64 = rand::thread_rng().gen();
+        let old: &IntSet = self.ptr.int_set_ref();
+        let mut s: Set = Dict::new(hash::string_object_hash, num);
+        for i in old.iter() {
+            let _ = s.add(Robj::create_string_object_from_long(i), ());
+        }
+        let ret = s.add(o, ());
+
+        self.ptr = Box::new(s);
+        self.encoding = RobjEncoding::Ht;
+
+        ret
+    }
 }
 
 impl DictPartialEq for RobjPtr {
@@ -594,10 +637,28 @@ impl ObjectData for Set {
     fn set_ref(&self) -> &Set {
         self
     }
+    fn set_mut(&mut self) -> &mut Set {
+        self
+    }
+    fn set_wrapper_ref(&self) -> &dyn SetWrapper {
+        self
+    }
+    fn set_wrapper_mut(&mut self) -> &mut dyn SetWrapper {
+        self
+    }
 }
 
 impl ObjectData for IntSet {
     fn int_set_ref(&self) -> &IntSet {
+        self
+    }
+    fn int_set_mut(&mut self) -> &mut IntSet {
+        self
+    }
+    fn set_wrapper_ref(&self) -> &dyn SetWrapper {
+        self
+    }
+    fn set_wrapper_mut(&mut self) -> &mut dyn SetWrapper {
         self
     }
 }
@@ -617,6 +678,18 @@ impl ObjectData for Zset {
 impl ObjectData for i64 {
     fn integer(&self) -> i64 {
         *self
+    }
+}
+
+impl SetWrapper for Set {
+    fn sw_len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl SetWrapper for IntSet {
+    fn sw_len(&self) -> usize {
+        self.len()
     }
 }
 

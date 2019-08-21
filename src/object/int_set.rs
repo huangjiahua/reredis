@@ -8,11 +8,23 @@ const INT_SET_ENC_INT16: Encoding = mem::size_of::<i16>() as Encoding;
 const INT_SET_ENC_INT32: Encoding = mem::size_of::<i32>() as Encoding;
 const INT_SET_ENC_INT64: Encoding = mem::size_of::<i64>() as Encoding;
 
+pub struct Iter<'a> {
+    set: &'a IntSet,
+    idx: usize,
+}
+
 impl IntSet {
     pub fn new() -> IntSet {
         let mut int_set = vec![0u8; 4];
         int_set[0] = INT_SET_ENC_INT16;
         IntSet(int_set)
+    }
+
+    pub fn iter(&self) -> Iter {
+        Iter {
+            set: self,
+            idx: 0,
+        }
     }
 
     pub fn add(&mut self, value: i64) -> Result<(), ()> {
@@ -207,6 +219,19 @@ impl IntSet {
 
     fn true_pos_enc(pos: usize, enc: Encoding) -> usize {
         pos * (enc as usize) + 4
+    }
+}
+
+impl<'a> Iterator for Iter<'a> {
+    type Item = i64;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.idx == self.set.len() {
+            return None;
+        }
+        let i = self.set.get(self.idx);
+        self.idx += 1;
+        Some(i)
     }
 }
 

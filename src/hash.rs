@@ -1,10 +1,14 @@
-use crate::object::RobjPtr;
+use crate::object::{RobjPtr, RobjEncoding};
 use murmurhash64::murmur_hash64a;
 
 pub fn string_object_hash(object: &RobjPtr, seed: u64) -> usize {
-    let object = object.borrow();
-    let string = object.string();
-    murmur_hash64a(string, seed) as usize
+    match object.borrow().encoding() {
+        RobjEncoding::Raw =>
+            murmur_hash64a(object.borrow().string(), seed) as usize,
+        RobjEncoding::Int =>
+            murmur_hash64a(object.borrow().integer().to_string().as_bytes(), seed) as usize,
+        _ => unreachable!()
+    }
 }
 
 #[cfg(test)]

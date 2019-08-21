@@ -5,7 +5,7 @@ use crate::client::Client;
 use crate::server::Server;
 use crate::ae::AeEventLoop;
 use crate::shared::{OK, NULL_BULK, CRLF, CZERO, CONE, COLON, WRONG_TYPE, PONG, EMPTY_MULTI_BULK};
-use crate::util::case_eq;
+use crate::util::{case_eq, bytes_to_i64};
 use crate::object::{Robj, RobjPtr, RobjEncoding, RobjType};
 use crate::object::list::ListWhere;
 use crate::object::RobjType::List;
@@ -78,7 +78,7 @@ fn set_generic_command(
     el: &mut AeEventLoop,
     nx: bool,
 ) {
-    let o = to_int_if_needed(Rc::clone(&client.argv[2]));
+    let o = to_int_if_needed(&client.argv[2]);
 
     let db = &mut server.db[client.db_idx];
     let r = db.dict.add(
@@ -107,10 +107,10 @@ fn set_generic_command(
     client.add_reply(reply);
 }
 
-pub fn to_int_if_needed(o: RobjPtr) -> RobjPtr {
+pub fn to_int_if_needed(o: &RobjPtr) -> RobjPtr {
     let can_be_int = o.borrow().object_to_long();
     match can_be_int {
-        Err(_) => o,
+        Err(_) => Rc::clone(o),
         Ok(i) => Robj::create_int_object(i),
     }
 }
@@ -169,6 +169,7 @@ pub fn incr_decr_command(
     el: &mut AeEventLoop,
     incr: i64,
 ) {
+    // TODO: no need to replace, just change the inner data
     let db = &mut server.db[client.db_idx];
     let mut val: i64;
 
@@ -599,6 +600,49 @@ pub fn lrem_command(
     client.add_reply(gen_usize_reply(n));
 }
 
+pub fn sadd_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let db = &mut server.db[client.db_idx];
+
+    let r = bytes_to_i64(client.argv[2].borrow().string());
+
+    let new = to_int_if_needed(&client.argv[2]);
+
+    let mut old_len: usize = 0;
+
+    let set_obj = match db.look_up_key_read(&client.argv[1]) {
+        None => {
+            let o = match r {
+                Ok(_) => Robj::create_int_set_object(),
+                Err(_) => Robj::create_set_object(),
+            };
+            let _ = db.dict.add(Rc::clone(&client.argv[1]), Rc::clone(&o));
+            o
+        }
+        Some(o) => {
+            if !o.borrow().is_set() {
+                client.add_reply(shared_object!(WRONG_TYPE));
+                return;
+            }
+            old_len = o.borrow().set_len();
+            o
+        }
+    };
+
+    let _ = set_obj.borrow_mut().set_add(new);
+
+    for idx in 3..client.argv.len() {
+        let new = to_int_if_needed(&client.argv[idx]);
+        let _ = set_obj.borrow_mut().set_add(new);
+    }
+
+    client.add_reply(gen_usize_reply(set_obj.borrow().set_len() - old_len));
+    server.dirty += 1;
+}
+
 pub fn incr_by_command(
     client: &mut Client,
     server: &mut Server,
@@ -634,7 +678,7 @@ pub fn get_set_command(
     server: &mut Server,
     el: &mut AeEventLoop,
 ) {
-    let o = to_int_if_needed(Rc::clone(&client.argv[2]));
+    let o = to_int_if_needed(&client.argv[2]);
     get_command(client, server, el);
     let db = &mut server.db[client.db_idx];
     db.dict.replace(Rc::clone(&client.argv[1]),
@@ -773,6 +817,7 @@ const CMD_TABLE: &[Command] = &[
     Command { name: "lrange", proc: lrange_command, arity: 4, flags: CMD_INLINE },
     Command { name: "ltrim", proc: ltrim_command, arity: 4, flags: CMD_INLINE },
     Command { name: "lrem", proc: lrem_command, arity: 4, flags: CMD_INLINE },
+    Command { name: "sadd", proc: sadd_command, arity: -3, flags: CMD_INLINE },
     // TODO
     Command { name: "incrby", proc: incr_by_command, arity: 3, flags: CMD_INLINE },
     Command { name: "decrby", proc: decr_by_command, arity: 3, flags: CMD_INLINE },
