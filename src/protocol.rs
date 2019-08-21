@@ -1,4 +1,5 @@
 use crate::object::{RobjPtr, Robj};
+use crate::util::bytes_to_usize;
 
 pub struct DecodeIter<'a> {
     raw: &'a [u8],
@@ -34,9 +35,7 @@ impl<'a> Iterator for DecodeIter<'a> {
 
 
         let len = &self.raw[self.idx + 1..i];
-        let len: usize = match std::str::from_utf8(len)
-            .unwrap()
-            .parse::<usize>() {
+        let len: usize = match bytes_to_usize(len) {
             Ok(n) => n,
             Err(_) => return Some(Err(())),
         };
@@ -53,13 +52,13 @@ impl<'a> Iterator for DecodeIter<'a> {
             return Some(Err(()));
         }
 
-        let s = std::str::from_utf8(&this[2..this.len() - 2]).unwrap();
+        let s = &this[2..this.len() - 2];
 
         self.idx = next;
         self.curr += 1;
 
         self.fail = false;
-        Some(Ok(Robj::create_string_object(s)))
+        Some(Ok(Robj::create_bytes_object(s)))
     }
 }
 
@@ -85,9 +84,7 @@ pub fn decode(raw: &[u8]) -> Result<DecodeIter, ()> {
         return Err(());
     }
 
-    let total = match std::str::from_utf8(&raw[1..i])
-        .unwrap()
-        .parse::<usize>() {
+    let total = match bytes_to_usize(&raw[1..i]) {
         Ok(n) => n,
         Err(_) => return Err(()),
     };
@@ -112,7 +109,7 @@ mod test {
 
     fn equal(left: &[RobjPtr], right: &[&str]) {
         for p in left.iter().zip(right) {
-            assert_eq!(p.0.borrow().string(), *p.1);
+            assert_eq!(p.0.borrow().string(), (*p.1).as_bytes());
         }
     }
 

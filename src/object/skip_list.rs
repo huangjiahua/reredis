@@ -1,5 +1,5 @@
 use std::rc::{Rc, Weak};
-use crate::object::{RobjPtr, Robj, RobjType, Sds};
+use crate::object::{RobjPtr, Robj, RobjType};
 use rand::prelude::*;
 use std::iter::Skip;
 use std::cell::{Ref, RefCell};
@@ -549,7 +549,7 @@ mod test {
         let range = RangeSpec::new_closed(0.2, 2.1);
         let node = list.first_in_range(&range).unwrap();
         assert_eq!(node.borrow().score, 0.2);
-        assert_eq!(node.borrow().obj_ref().borrow().string(), "bar");
+        assert_eq!(node.borrow().obj_ref().borrow().string(), b"bar");
         list.delete(0.2, &o2);
         let node = list.first_in_range(&range).unwrap();
         assert_eq!(node.borrow().score, 2.1);

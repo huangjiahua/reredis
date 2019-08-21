@@ -687,7 +687,7 @@ pub fn object_command(
 ) {
     let sub = client.argv[1].borrow().string().to_ascii_lowercase();
     match &sub[..] {
-        "encoding" => object_encoding_command(client, server, el),
+        b"encoding" => object_encoding_command(client, server, el),
         _ => {
             client.add_str_reply("-Error unknown command\r\n");
         }
@@ -786,7 +786,7 @@ const CMD_TABLE: &[Command] = &[
     Command { name: "command", proc: command_command, arity: 1, flags: CMD_INLINE },
 ];
 
-pub fn lookup_command(name: &str) -> Option<&'static Command> {
+pub fn lookup_command(name: &[u8]) -> Option<&'static Command> {
     CMD_TABLE.iter()
-        .find(|x| case_eq(x.name, name))
+        .find(|x| case_eq(x.name.as_bytes(), name))
 }

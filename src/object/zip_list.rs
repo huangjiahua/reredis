@@ -3,6 +3,7 @@ use std::iter::Chain;
 use std::iter::Cloned;
 use std::slice;
 use std::cell::RefCell;
+use crate::util::bytes_to_i64;
 
 const ZIP_LIST_I16_ENC: u8 = 0b1100_0000;
 const ZIP_LIST_I32_ENC: u8 = 0b1101_0000;
@@ -324,8 +325,7 @@ impl<'a> PartialEq<&[u8]> for ZipListValue<'a> {
         match self {
             ZipListValue::Bytes(b) => *b == *other,
             ZipListValue::Int(i) => {
-                let s = std::str::from_utf8(other).unwrap().parse::<i64>();
-                (s.is_ok()) && (s.unwrap() == *i)
+                i.to_string().as_bytes() == *other
             }
         }
     }
@@ -596,10 +596,8 @@ impl ZipList {
                     }
                 }
                 ZipListValue::Int(k) => {
-                    if let Ok(m) = std::str::from_utf8(v).unwrap().parse::<i64>() {
-                        if m == k {
-                            return Some(n);
-                        }
+                    if k.to_string().as_bytes() == v {
+                        return Some(n);
                     }
                 }
             }
@@ -688,8 +686,7 @@ impl ZipList {
 
         prev_len_size = prev_length_size(prev_len);
 
-        let string = std::str::from_utf8(s).unwrap();
-        encoding = match string.parse::<i64>() {
+        encoding = match bytes_to_i64(s) {
             Ok(i) => Encoding::Int(i),
             Err(_) => Encoding::Str(s.len()),
         };

@@ -3,7 +3,7 @@ use std::time::SystemTime;
 use std::rc::Rc;
 use crate::env::{read_query_from_client, send_reply_to_client};
 use std::cell::RefCell;
-use crate::object::{Sds, RobjPtr, Robj};
+use crate::object::{RobjPtr, Robj};
 use crate::protocol;
 use std::error::Error;
 use std::fmt::Display;
@@ -96,7 +96,7 @@ impl Client {
         assert!(!self.argv.is_empty());
         // TODO: free memory if needed
 
-        if case_eq(self.argv[0].borrow().string(), "quit") {
+        if case_eq(self.argv[0].borrow().string(), "quit".as_bytes()) {
             return Err(CommandError::Quit);
         }
 

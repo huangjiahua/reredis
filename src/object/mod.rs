@@ -1,4 +1,3 @@
-pub mod sds;
 pub mod list;
 pub mod dict;
 pub mod skip_list;
@@ -13,7 +12,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::error::Error;
 
-pub use sds::Sds;
 use list::List;
 use zip_list::ZipList;
 use dict::{Dict, DictPartialEq};
@@ -25,6 +23,7 @@ use rand::prelude::*;
 use crate::object::zip_list::ZipListValue;
 use crate::object::list::ListWhere;
 use std::hint::unreachable_unchecked;
+use crate::util::{bytes_vec, bytes_to_i64};
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum RobjType {
@@ -49,6 +48,9 @@ pub enum RobjEncoding {
 }
 
 pub trait ObjectData {
+    fn bytes_ref(&self) -> &[u8] {
+        panic!("This is not a byte slice");
+    }
     fn sds_ref(&self) -> &str {
         panic!("This is not an Sds string");
     }
@@ -62,7 +64,9 @@ pub trait ObjectData {
         panic!("This is not a List");
     }
     fn set_ref(&self) -> &Set { panic!("This is not a Set"); }
-    fn zip_list_ref(&self) -> &ZipList { panic!("This is not a ZipList"); }
+    fn zip_list_ref(&self) -> &ZipList {
+        panic!("This is not a ZipList");
+    }
     fn zip_list_mut(&mut self) -> &mut ZipList {
         panic!("This is not a ZipList");
     }
@@ -82,8 +86,8 @@ pub struct Robj {
 }
 
 impl Robj {
-    pub fn string(&self) -> &str {
-        self.ptr.sds_ref()
+    pub fn string(&self) -> &[u8] {
+        self.ptr.bytes_ref()
     }
 
     pub fn integer(&self) -> i64 {
@@ -92,18 +96,22 @@ impl Robj {
 
     pub fn dup_string_object(&self) -> RobjPtr {
         let string = self.string();
-        Self::create_string_object(string)
+        Self::create_bytes_object(string)
     }
 
     pub fn object_to_long(&self) -> Result<i64, Box<dyn Error>> {
         let string = self.string();
-        let i: i64 = string.parse()?;
-        Ok(i)
+        bytes_to_i64(string)
     }
 
     pub fn is_object_can_be_long(&self) -> bool {
-        self.obj_type == RobjType::String &&
-            self.string().parse::<i64>().is_ok()
+        if self.obj_type != RobjType::String {
+            return false;
+        }
+        match bytes_to_i64(self.string()) {
+            Ok(_) => true,
+            Err(_) => false,
+        }
     }
 
     pub fn try_object_encoding(&self) -> RobjPtr {
@@ -144,10 +152,20 @@ impl Robj {
     }
 
     pub fn create_string_object(string: &str) -> RobjPtr {
+        let bytes: Vec<u8> = bytes_vec(string.as_bytes());
         Self::create_object(
             RobjType::String,
             RobjEncoding::Raw,
-            Box::new(string.to_string()),
+            Box::new(bytes),
+        )
+    }
+
+    pub fn create_bytes_object(bytes: &[u8]) -> RobjPtr {
+        let bytes: Vec<u8> = bytes_vec(bytes);
+        Self::create_object(
+            RobjType::String,
+            RobjEncoding::Raw,
+            Box::new(bytes),
         )
     }
 
@@ -165,7 +183,8 @@ impl Robj {
     }
 
     pub fn create_string_object_from_long(value: i64) -> Rc<RefCell<Robj>> {
-        let ptr = Box::new(value.to_string());
+        let bytes: Vec<u8> = bytes_vec(&value.to_string().as_bytes());
+        let ptr = Box::new(bytes);
         Self::create_object(
             RobjType::String,
             RobjEncoding::Raw,
@@ -174,7 +193,8 @@ impl Robj {
     }
 
     pub fn create_string_object_from_double(value: f64) -> Rc<RefCell<Robj>> {
-        let ptr = Box::new(value.to_string());
+        let bytes: Vec<u8> = bytes_vec(&value.to_string().as_bytes());
+        let ptr = Box::new(bytes);
         Self::create_object(
             RobjType::String,
             RobjEncoding::Raw,
@@ -279,11 +299,11 @@ impl Robj {
                 let mut l = self.ptr.zip_list_mut();
                 match w {
                     ListWhere::Tail => {
-                        l.push(o.borrow().string().as_bytes());
+                        l.push(o.borrow().string());
                     }
                     ListWhere::Head => {
                         let mut node = l.front_mut();
-                        node.insert(o.borrow().string().as_bytes());
+                        node.insert(o.borrow().string());
                     }
                 }
             }
@@ -314,7 +334,7 @@ impl Robj {
             let obj = match v {
                 ZipListValue::Int(n) => Robj::create_string_object_from_long(n),
                 ZipListValue::Bytes(b) =>
-                    Robj::create_string_object(std::str::from_utf8(b).unwrap()),
+                    Robj::create_bytes_object(b),
             };
             new_list.push_front(obj);
         }
@@ -339,7 +359,7 @@ impl Robj {
             let ret = match node.value() {
                 ZipListValue::Int(i) => Robj::create_string_object_from_long(i),
                 ZipListValue::Bytes(b) =>
-                    Robj::create_string_object(std::str::from_utf8(b).unwrap()),
+                    Robj::create_bytes_object(b),
             };
             node.delete();
             Some(ret)
@@ -381,7 +401,7 @@ impl Robj {
                     ZipListValue::Int(i) =>
                         Robj::create_string_object_from_long(i),
                     ZipListValue::Bytes(b) =>
-                        Robj::create_string_object(std::str::from_utf8(b).unwrap()),
+                        Robj::create_bytes_object(b),
                 };
                 Some(r)
             }
@@ -422,7 +442,7 @@ impl Robj {
         }
 
         node = node.delete();
-        node.insert(o.borrow().string().as_bytes());
+        node.insert(o.borrow().string());
         Ok(())
     }
 
@@ -435,7 +455,7 @@ impl Robj {
                         ZipListValue::Int(i) =>
                             Robj::create_string_object_from_long(i),
                         ZipListValue::Bytes(b) =>
-                            Robj::create_string_object(std::str::from_utf8(b).unwrap())
+                            Robj::create_bytes_object(b)
                     }))
             }
             RobjEncoding::LinkedList => {
@@ -501,10 +521,10 @@ impl Robj {
         let f = |val: &ZipListValue| -> bool {
             match val {
                 ZipListValue::Int(i) => {
-                    s == format!("{}", *i)
+                    s == format!("{}", *i).as_bytes()
                 }
                 ZipListValue::Bytes(b) => {
-                    s == std::str::from_utf8(*b).unwrap()
+                    s == *b
                 }
             }
         };
@@ -544,9 +564,8 @@ impl DictPartialEq for RobjPtr {
     }
 }
 
-
-impl ObjectData for Sds {
-    fn sds_ref(&self) -> &str {
+impl ObjectData for Vec<u8> {
+    fn bytes_ref(&self) -> &[u8] {
         self
     }
 }
@@ -611,7 +630,7 @@ mod test {
         let o: RobjPtr = Robj::create_object(
             RobjType::String,
             RobjEncoding::Raw,
-            Box::new(Sds::from("hi")),
+            Box::new(bytes_vec(b"hello")),
         );
     }
 
@@ -620,6 +639,7 @@ mod test {
         let o: RobjPtr = Robj::create_string_object("foo");
         let o2: RobjPtr = Robj::create_raw_string_object("bar");
         let o3: RobjPtr = Robj::create_embedded_string_object("hey");
+        let o4: RobjPtr = Robj::create_bytes_object(b"foo");
     }
 
     #[test]
@@ -646,10 +666,10 @@ mod test {
     #[test]
     fn create_from_number() {
         let objp = Robj::create_string_object_from_long(56);
-        assert_eq!(objp.borrow().string(), "56");
+        assert_eq!(objp.borrow().string(), b"56");
         let objp = Robj::create_string_object_from_double(3.14);
-        assert_eq!(objp.borrow().string(), "3.14");
+        assert_eq!(objp.borrow().string(), b"3.14");
         let objp = Robj::create_string_object_from_double(0.0);
-        assert_eq!(objp.borrow().string(), "0");
+        assert_eq!(objp.borrow().string(), b"0");
     }
 }

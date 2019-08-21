@@ -189,8 +189,6 @@ pub fn read_query_from_client(
             .borrow_mut()
             .query_buf
             .extend_from_slice(&buf[..nread]);
-        // TODO: delete this
-        debug!("Received: {}", std::str::from_utf8(&buf[..nread]).unwrap());
     } else {
         return;
     }
@@ -259,7 +257,7 @@ pub fn send_reply_to_client(
     for rep in client.reply
         .iter()
         .map(|x| x.as_ref()) {
-        match stream.write(rep.borrow().string().as_bytes()) {
+        match stream.write(rep.borrow().string()) {
             Err(e) => if e.kind() != ErrorKind::Interrupted {
                 debug!("Error writing to client: {}", e.description());
                 free_client_occupied_in_el(server, el, data.unwrap_client(), stream);
