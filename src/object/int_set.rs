@@ -110,7 +110,7 @@ impl IntSet {
         }
     }
 
-    fn get(&self, pos: usize) -> i64 {
+    pub fn get(&self, pos: usize) -> i64 {
         self.get_by_enc(pos, self.encoding())
     }
 

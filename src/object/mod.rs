@@ -80,6 +80,12 @@ trait SetWrapper {
     fn sw_delete(&mut self, o: &RobjPtr) -> Result<(), ()>;
     fn sw_iter<'a>(&'a self) -> Box<dyn Iterator<Item=RobjPtr> + 'a>;
     fn sw_exists(&self, o: &RobjPtr) -> bool;
+    fn sw_pop_random(&mut self) -> RobjPtr;
+}
+
+pub struct SWInterIter<'a> {
+    main: Box<dyn Iterator<Item=RobjPtr> + 'a>,
+    others: &'a [RobjPtr],
 }
 
 impl Robj {
@@ -89,6 +95,11 @@ impl Robj {
 
     pub fn integer(&self) -> i64 {
         self.ptr.integer()
+    }
+
+    pub fn change_to_str(&mut self, s: &str) {
+        let bytes = bytes_vec(s.as_bytes());
+        self.ptr = Box::new(bytes);
     }
 
     pub fn dup_string_object(&self) -> RobjPtr {
@@ -614,6 +625,17 @@ impl Robj {
     pub fn set_exists(&self, o: &RobjPtr) -> bool {
         self.ptr.set_wrapper_ref().sw_exists(o)
     }
+
+    pub fn set_pop_random(&mut self) -> RobjPtr {
+        self.ptr.set_wrapper_mut().sw_pop_random()
+    }
+
+    pub fn set_inter_iter<'a>(&'a self, others: &'a [RobjPtr]) -> SWInterIter<'a> {
+        SWInterIter {
+            main: self.set_iter(),
+            others,
+        }
+    }
 }
 
 impl DictPartialEq for RobjPtr {
@@ -716,6 +738,13 @@ impl SetWrapper for Set {
             None => false,
         }
     }
+
+    fn sw_pop_random(&mut self) -> RobjPtr {
+        let (o, _) = self.random_key_value();
+        let o = Rc::clone(o);
+        self.delete(&o);
+        Rc::clone(&o)
+    }
 }
 
 impl SetWrapper for IntSet {
@@ -742,6 +771,33 @@ impl SetWrapper for IntSet {
         } else {
             false
         }
+    }
+
+    fn sw_pop_random(&mut self) -> RobjPtr {
+        let which: usize = rand::thread_rng().gen_range(0, self.len());
+        let i = self.get(which);
+        self.remove(i);
+        Robj::create_string_object_from_long(i)
+    }
+}
+
+impl <'a> Iterator for SWInterIter<'a> {
+    type Item = RobjPtr;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(o) = self.main.next() {
+            let mut i: usize = 0;
+            for other in self.others.iter() {
+                if !other.borrow().set_exists(&o) {
+                    break;
+                }
+                i += 1;
+            }
+            if i == self.others.len() {
+                return Some(o)
+            }
+        }
+        None
     }
 }
 

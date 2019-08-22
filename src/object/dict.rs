@@ -1,4 +1,5 @@
 use std::ops::IndexMut;
+use rand::Rng;
 
 const DICT_HT_INITIAL_SIZE: usize = 4;
 
@@ -333,6 +334,35 @@ impl<K, V> Dict<K, V>
         ht.insert_head(idx, entry);
         ht.used += 1;
         true
+    }
+
+    pub fn random_key_value(&self) -> (&K, &V) {
+        assert!(self.len() > 0, "cannot generate random key value on empty dict");
+        let mut rng = rand::thread_rng();
+        let mut bucket = self.ht[0].size;
+        if self.is_rehashing() {
+            bucket += self.ht[1].size;
+        }
+
+        let mut which: usize = rng.gen_range(0, bucket);
+
+        loop {
+            let mut idx = which;
+
+            let ht = if idx >= self.ht[0].size {
+                idx -= self.ht[0].size;
+                &self.ht[1]
+            } else {
+                &self.ht[0]
+            };
+
+            if let Some(e) = ht.table[idx].as_ref() {
+                return (&e.key, &e.value)
+            }
+
+            which = (which + 1) % bucket;
+        }
+        unreachable!()
     }
 
     pub fn enable_resize(&mut self) {

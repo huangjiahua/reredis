@@ -1,6 +1,6 @@
 use std::mem::swap;
 use std::rc::Rc;
-use std::cmp::min;
+use std::cmp::{min, Ordering};
 use crate::client::Client;
 use crate::server::Server;
 use crate::ae::AeEventLoop;
@@ -9,6 +9,7 @@ use crate::util::{case_eq, bytes_to_i64};
 use crate::object::{Robj, RobjPtr, RobjEncoding, RobjType};
 use crate::object::list::ListWhere;
 use crate::object::RobjType::List;
+use rand::Rng;
 
 type CommandProc = fn(
     client: &mut Client,
@@ -831,6 +832,103 @@ pub fn scard_command(
     ));
 }
 
+pub fn spop_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let db = &mut server.db[client.db_idx];
+    let old_len: usize;
+    let deleted: usize;
+
+    let set_obj = match db.look_up_key_read(&client.argv[1]) {
+        None => {
+            client.add_reply(shared_object!(EMPTY_MULTI_BULK));
+            return;
+        }
+        Some(o) => {
+            if !o.borrow().is_set() {
+                client.add_reply(shared_object!(WRONG_TYPE));
+                return;
+            }
+            o
+        }
+    };
+
+    old_len = set_obj.borrow().set_len();
+    deleted = rand::thread_rng().gen_range(0, old_len + 1);
+
+    client.add_str_reply(&format!("*{}\r\n", deleted));
+    for _ in 0..deleted {
+        add_single_reply(
+            client,
+            set_obj.borrow_mut().set_pop_random(),
+        );
+    }
+
+    if deleted == old_len {
+        db.delete_key(&client.argv[1]);
+    }
+    server.dirty += 1;
+}
+
+pub fn sinter_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let db = &mut server.db[client.db_idx];
+    let sets: Vec<RobjPtr> = Vec::with_capacity(client.argc());
+}
+
+fn sinter_general_command(
+    client: &mut Client,
+    server: &mut Server,
+    dst: Option<RobjPtr>,
+) {
+    let db = &mut server.db[client.db_idx];
+    let mut sets: Vec<RobjPtr> = Vec::with_capacity(client.argc());
+
+    for key in client.argv.iter().skip(1) {
+        let set_obj = match db.look_up_key_read(&client.argv[1]) {
+            None => {
+                client.add_reply(shared_object!(EMPTY_MULTI_BULK));
+                return;
+            }
+            Some(o) => {
+                if !o.borrow().is_set() {
+                    client.add_reply(shared_object!(WRONG_TYPE));
+                    return;
+                }
+                o
+            }
+        };
+        sets.push(set_obj);
+    }
+
+    sets.sort_by(|l, r| {
+        match l.borrow().set_len() < r.borrow().set_len() {
+            true => Ordering::Less,
+            false => Ordering::Greater,
+        }
+    });
+
+    unimplemented!()
+
+//    let iter = sets[0].borrow().set_inter_iter(&sets[1..]);
+//
+//    let cnt: usize = 0;
+//    let num = Robj::create_string_object("");
+//    client.add_reply(Rc::clone(&num));
+//
+//    for r in iter {
+//        add_single_reply(client, r);
+//        cnt += 1;
+//    }
+//
+//    num.borrow_mut().change_to_str(&format!("*{}\r\n", cnt));
+}
+
 pub fn incr_by_command(
     client: &mut Client,
     server: &mut Server,
@@ -1010,6 +1108,7 @@ const CMD_TABLE: &[Command] = &[
     Command { name: "smove", proc: smove_command, arity: 4, flags: CMD_INLINE },
     Command { name: "sismember", proc: sismember_command, arity: 3, flags: CMD_INLINE },
     Command { name: "scard", proc: scard_command, arity: 2, flags: CMD_INLINE },
+    Command { name: "spop", proc: spop_command, arity: 2, flags: CMD_INLINE },
     Command { name: "smembers", proc: smembers_command, arity: 2, flags: CMD_INLINE },
     // TODO
     Command { name: "incrby", proc: incr_by_command, arity: 3, flags: CMD_INLINE },
