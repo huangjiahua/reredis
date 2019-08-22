@@ -252,7 +252,6 @@ pub fn send_reply_to_client(
 
     let mut fd_ref = fd.as_ref().borrow_mut();
     let stream = fd_ref.unwrap_stream_mut();
-    debug!("ready to reply");
 
     for rep in client.reply
         .iter()

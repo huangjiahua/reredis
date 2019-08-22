@@ -77,6 +77,9 @@ pub struct Robj {
 
 trait SetWrapper {
     fn sw_len(&self) -> usize;
+    fn sw_delete(&mut self, o: &RobjPtr) -> Result<(), ()>;
+    fn sw_iter<'a>(&'a self) -> Box<dyn Iterator<Item=RobjPtr> + 'a>;
+    fn sw_exists(&self, o: &RobjPtr) -> bool;
 }
 
 impl Robj {
@@ -585,7 +588,7 @@ impl Robj {
         }
     }
 
-    pub fn set_update_add(&mut self, o: RobjPtr) -> Result<(), ()> {
+    fn set_update_add(&mut self, o: RobjPtr) -> Result<(), ()> {
         let mut num: u64 = rand::thread_rng().gen();
         let old: &IntSet = self.ptr.int_set_ref();
         let mut s: Set = Dict::new(hash::string_object_hash, num);
@@ -598,6 +601,18 @@ impl Robj {
         self.encoding = RobjEncoding::Ht;
 
         ret
+    }
+
+    pub fn set_delete(&mut self, o: &RobjPtr) -> Result<(), ()> {
+        self.ptr.set_wrapper_mut().sw_delete(o)
+    }
+
+    pub fn set_iter<'a>(&'a self) -> Box<dyn Iterator<Item=RobjPtr> + 'a> {
+        self.ptr.set_wrapper_ref().sw_iter()
+    }
+
+    pub fn set_exists(&self, o: &RobjPtr) -> bool {
+        self.ptr.set_wrapper_ref().sw_exists(o)
     }
 }
 
@@ -685,11 +700,48 @@ impl SetWrapper for Set {
     fn sw_len(&self) -> usize {
         self.len()
     }
+
+    fn sw_delete(&mut self, o: &Rc<RefCell<Robj>>) -> Result<(), ()> {
+        self.delete(o).map(|_| ())
+    }
+
+    fn sw_iter<'a>(&'a self) -> Box<dyn Iterator<Item=RobjPtr> + 'a> {
+        Box::new(self.iter()
+            .map(|x| Rc::clone(x.0)))
+    }
+
+    fn sw_exists(&self, o: &RobjPtr) -> bool {
+        match self.find(o) {
+            Some(_) => true,
+            None => false,
+        }
+    }
 }
 
 impl SetWrapper for IntSet {
     fn sw_len(&self) -> usize {
         self.len()
+    }
+
+    fn sw_delete(&mut self, o: &Rc<RefCell<Robj>>) -> Result<(), ()> {
+        if let Ok(i) = o.borrow().object_to_long() {
+            self.remove(i)
+        } else {
+            Err(())
+        }
+    }
+
+    fn sw_iter<'a>(&'a self) -> Box<dyn Iterator<Item=RobjPtr> + 'a> {
+        Box::new(self.iter()
+            .map(|x| Robj::create_string_object_from_long(x)))
+    }
+
+    fn sw_exists(&self, o: &RobjPtr) -> bool {
+        if let Ok(i) = o.borrow().object_to_long() {
+            self.find(i)
+        } else {
+            false
+        }
     }
 }
 

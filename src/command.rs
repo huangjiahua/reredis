@@ -471,7 +471,7 @@ pub fn lrange_command(
     let len = o.borrow().list_len();
 
     let (mut left, mut right) = (real_list_index(left, len),
-                             real_list_index(right, len));
+                                 real_list_index(right, len));
 
     if (left < 0 && right < 0) || (left >= 0 && left as usize >= len) || left > right {
         client.add_reply(shared_object!(EMPTY_MULTI_BULK));
@@ -641,6 +641,194 @@ pub fn sadd_command(
 
     client.add_reply(gen_usize_reply(set_obj.borrow().set_len() - old_len));
     server.dirty += 1;
+}
+
+pub fn srem_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let db = &mut server.db[client.db_idx];
+    let old_len: usize;
+    let cur_len: usize;
+
+    let set_obj = match db.look_up_key_read(&client.argv[1]) {
+        None => {
+            client.add_reply(shared_object!(CZERO));
+            return;
+        }
+        Some(o) => {
+            if !o.borrow().is_set() {
+                client.add_reply(shared_object!(WRONG_TYPE));
+                return;
+            }
+            o
+        }
+    };
+
+    old_len = set_obj.borrow().set_len();
+
+    for o in client.argv.iter().skip(2) {
+        set_obj.borrow_mut().set_delete(o);
+        if set_obj.borrow().set_len() == 0 {
+            break;
+        }
+    }
+
+    cur_len = set_obj.borrow().set_len();
+
+    client.add_reply(gen_usize_reply(old_len - cur_len));
+    if cur_len == 0 {
+        db.delete_key(&client.argv[1]);
+    }
+
+    server.dirty += 1;
+}
+
+pub fn smembers_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let db = &mut server.db[client.db_idx];
+
+    let set_obj = match db.look_up_key_read(&client.argv[1]) {
+        None => {
+            client.add_reply(shared_object!(EMPTY_MULTI_BULK));
+            return;
+        }
+        Some(o) => {
+            if !o.borrow().is_set() {
+                client.add_reply(shared_object!(WRONG_TYPE));
+                return;
+            }
+            o
+        }
+    };
+
+    client.add_str_reply(&format!("*{}\r\n", set_obj.borrow().set_len()));
+
+    for o in set_obj.borrow().set_iter() {
+        add_single_reply(client, o);
+    }
+}
+
+pub fn smove_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let db = &mut server.db[client.db_idx];
+
+    let src_set = match db.look_up_key_read(&client.argv[1]) {
+        None => {
+            client.add_reply(shared_object!(CZERO));
+            return;
+        }
+        Some(o) => {
+            if !o.borrow().is_set() {
+                client.add_reply(shared_object!(WRONG_TYPE));
+                return;
+            }
+            o
+        }
+    };
+
+    let mut dst_set = match db.look_up_key_read(&client.argv[2]) {
+        None => {
+            None
+        }
+        Some(o) => {
+            if !o.borrow().is_set() {
+                client.add_reply(shared_object!(WRONG_TYPE));
+                return;
+            }
+            Some(o)
+        }
+    };
+
+    let r = src_set.borrow_mut().set_delete(&client.argv[3]);
+
+    match r {
+        Ok(_) => {
+            let dst_set = match dst_set {
+                Some(s) => s,
+                None => {
+                    let set = Robj::create_int_set_object();
+                    db.dict.add(
+                        Rc::clone(&client.argv[2]),
+                        Rc::clone(&set),
+                    );
+                    set
+                }
+            };
+            dst_set.borrow_mut().set_add(Rc::clone(&client.argv[3]));
+            client.add_reply(shared_object!(CONE));
+        }
+        Err(_) => {
+            client.add_reply(shared_object!(CZERO));
+        }
+    }
+
+    if src_set.borrow().set_len() == 0 {
+        db.delete_key(&client.argv[1]);
+    }
+    server.dirty += 1;
+}
+
+pub fn sismember_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let db = &mut server.db[client.db_idx];
+
+    let set_obj = match db.look_up_key_read(&client.argv[1]) {
+        None => {
+            client.add_reply(shared_object!(CZERO));
+            return;
+        }
+        Some(o) => {
+            if !o.borrow().is_set() {
+                client.add_reply(shared_object!(WRONG_TYPE));
+                return;
+            }
+            o
+        }
+    };
+
+    let r = set_obj.borrow().set_exists(&client.argv[2]);
+
+    match r {
+        true => client.add_reply(shared_object!(CONE)),
+        false => client.add_reply(shared_object!(CZERO)),
+    }
+}
+
+pub fn scard_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let db = &mut server.db[client.db_idx];
+
+    let set_obj = match db.look_up_key_read(&client.argv[1]) {
+        None => {
+            client.add_reply(shared_object!(CZERO));
+            return;
+        }
+        Some(o) => {
+            if !o.borrow().is_set() {
+                client.add_reply(shared_object!(WRONG_TYPE));
+                return;
+            }
+            o
+        }
+    };
+
+    client.add_reply(gen_usize_reply(
+        set_obj.borrow().set_len()
+    ));
 }
 
 pub fn incr_by_command(
@@ -818,6 +1006,11 @@ const CMD_TABLE: &[Command] = &[
     Command { name: "ltrim", proc: ltrim_command, arity: 4, flags: CMD_INLINE },
     Command { name: "lrem", proc: lrem_command, arity: 4, flags: CMD_INLINE },
     Command { name: "sadd", proc: sadd_command, arity: -3, flags: CMD_INLINE },
+    Command { name: "srem", proc: srem_command, arity: -3, flags: CMD_INLINE },
+    Command { name: "smove", proc: smove_command, arity: 4, flags: CMD_INLINE },
+    Command { name: "sismember", proc: sismember_command, arity: 3, flags: CMD_INLINE },
+    Command { name: "scard", proc: scard_command, arity: 2, flags: CMD_INLINE },
+    Command { name: "smembers", proc: smembers_command, arity: 2, flags: CMD_INLINE },
     // TODO
     Command { name: "incrby", proc: incr_by_command, arity: 3, flags: CMD_INLINE },
     Command { name: "decrby", proc: decr_by_command, arity: 3, flags: CMD_INLINE },
