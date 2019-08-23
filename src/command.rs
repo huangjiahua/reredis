@@ -29,6 +29,12 @@ pub struct Command {
     pub flags: i32,
 }
 
+#[derive(Copy, Clone, PartialEq)]
+enum DiffOperation {
+    Diff,
+    Union,
+}
+
 pub fn get_command(
     client: &mut Client,
     server: &mut Server,
@@ -880,6 +886,7 @@ pub fn sinterstore_command(
     sinter_general_command(client, server, Some(Rc::clone(&new_set)));
     if new_set.borrow().set_len() > 0 {
         server.db[client.db_idx].dict.replace(new_key, new_set);
+        server.dirty += 1;
     }
 }
 
@@ -894,7 +901,11 @@ fn sinter_general_command(
     for key in client.argv.iter().skip(1) {
         let set_obj = match db.look_up_key_read(key) {
             None => {
-                client.add_reply(shared_object!(EMPTY_MULTI_BULK));
+                if dst.is_none() {
+                    client.add_reply(shared_object!(EMPTY_MULTI_BULK));
+                } else {
+                    client.add_reply(shared_object!(CZERO));
+                }
                 return;
             }
             Some(o) => {
@@ -930,6 +941,106 @@ fn sinter_general_command(
         None => num.borrow_mut().change_to_str(&format!("*{}\r\n", cnt)),
         Some(r) =>
             num.borrow_mut().change_to_str(&format!(":{}\r\n", r.borrow().set_len())),
+    }
+}
+
+pub fn sunion_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    sdiff_general_command(client, server, false, DiffOperation::Union);
+}
+
+pub fn sunionstore_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    sdiff_general_command(client, server, true, DiffOperation::Union);
+}
+
+pub fn sdiff_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    sdiff_general_command(client, server, false, DiffOperation::Diff);
+}
+
+pub fn sdiffstore_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    sdiff_general_command(client, server, true, DiffOperation::Diff);
+}
+
+
+fn sdiff_general_command(
+    client: &mut Client,
+    server: &mut Server,
+    dst: bool,
+    op: DiffOperation,
+) {
+    let mut sets: Vec<RobjPtr> = Vec::with_capacity(client.argc() - 1);
+    let db = &mut server.db[client.db_idx];
+    let mut cardinality: usize = 0;
+
+    for (i, key) in client.argv.iter().skip(1).enumerate() {
+        match db.look_up_key_read(key) {
+            None => {
+                if op == DiffOperation::Diff && i == 0 {
+                    if dst {
+                        client.add_reply(shared_object!(CZERO));
+                    } else {
+                        client.add_reply(shared_object!(EMPTY_MULTI_BULK));
+                    }
+                    return;
+                }
+            }
+            Some(o) => {
+                if !o.borrow().is_set() {
+                    client.add_reply(shared_object!(WRONG_TYPE));
+                    return;
+                }
+                sets.push(o);
+            }
+        };
+    }
+
+    assert!(sets.len() > 0);
+
+    let mut tmp_set = Robj::create_int_set_object();
+
+    for (i, set) in sets.iter().enumerate() {
+        let set_ref = set.borrow();
+        for obj in set_ref.set_iter() {
+            if op == DiffOperation::Union || i == 0 {
+                if tmp_set.borrow_mut().set_add(obj).is_ok() {
+                    cardinality += 1;
+                }
+            } else if op == DiffOperation::Diff {
+                if tmp_set.borrow_mut().set_delete(&obj).is_ok() {
+                    cardinality -= 1;
+                }
+            }
+        }
+        if op == DiffOperation::Diff && cardinality == 0 {
+            break;
+        }
+    }
+
+    if !dst {
+        client.add_str_reply(&format!("*{}\r\n", cardinality));
+        assert_eq!(cardinality, tmp_set.borrow().set_len());
+        for obj in tmp_set.borrow().set_iter() {
+            add_single_reply(client, obj);
+        }
+    } else {
+        client.add_reply(gen_usize_reply(cardinality));
+        db.dict.replace(Rc::clone(&client.argv[1]), tmp_set);
+        server.dirty += 1;
     }
 }
 
@@ -1115,6 +1226,10 @@ const CMD_TABLE: &[Command] = &[
     Command { name: "spop", proc: spop_command, arity: 2, flags: CMD_INLINE },
     Command { name: "sinter", proc: sinter_command, arity: -2, flags: CMD_INLINE },
     Command { name: "sinterstore", proc: sinterstore_command, arity: -3, flags: CMD_INLINE },
+    Command { name: "sunion", proc: sunion_command, arity: -2, flags: CMD_INLINE },
+    Command { name: "sunionstore", proc: sunionstore_command, arity: -3, flags: CMD_INLINE },
+    Command { name: "sdiff", proc: sdiff_command, arity: -2, flags: CMD_INLINE },
+    Command { name: "sdiffstore", proc: sdiffstore_command, arity: -3, flags: CMD_INLINE },
     Command { name: "smembers", proc: smembers_command, arity: 2, flags: CMD_INLINE },
     // TODO
     Command { name: "incrby", proc: incr_by_command, arity: 3, flags: CMD_INLINE },
