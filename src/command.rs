@@ -10,6 +10,7 @@ use crate::object::{Robj, RobjPtr, RobjEncoding, RobjType};
 use crate::object::list::ListWhere;
 use crate::object::RobjType::List;
 use rand::Rng;
+use crate::db::DB;
 
 type CommandProc = fn(
     client: &mut Client,
@@ -1088,6 +1089,20 @@ pub fn get_set_command(
     server.dirty += 1;
 }
 
+pub fn randomkey_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let db = &server.db[client.db_idx];
+    if db.dict.len() == 0 {
+        client.add_reply(shared_object!(NULL_BULK));
+    } else {
+        let (key, _) = db.dict.random_key_value();
+        add_single_reply(client, Rc::clone(key));
+    }
+}
+
 pub fn select_command(
     client: &mut Client,
     server: &mut Server,
@@ -1109,12 +1124,126 @@ pub fn select_command(
     }
 }
 
+pub fn move_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let r = client.argv[2].borrow().object_to_long();
+    let dst = match r {
+        Ok(i) => i,
+        Err(_) => {
+            client.add_reply(shared_object!(CZERO));
+            return;
+        }
+    };
+
+    if dst < 0 || dst as usize == client.db_idx || dst as usize >= server.db.len() {
+        client.add_reply(shared_object!(CZERO));
+        return;
+    }
+
+    let dst = dst as usize;
+
+    let (src_db, dst_db) = if client.db_idx < dst {
+        let (left, right) = server.db.split_at_mut(dst);
+        (&mut left[client.db_idx], &mut right[0])
+    } else {
+        let (left, right) = server.db.split_at_mut(client.db_idx);
+        (&mut right[0], &mut left[dst])
+    };
+
+    let value = match src_db.look_up_key_read(&client.argv[1]) {
+        None => {
+            client.add_reply(shared_object!(CZERO));
+            return;
+        }
+        Some(o) => o,
+    };
+
+    match dst_db.dict.add(Rc::clone(&client.argv[1]), value) {
+        Err(_) => client.add_reply(shared_object!(CZERO)),
+        Ok(_) => {
+            let _ = src_db.delete_key(&client.argv[1]);
+            client.add_reply(shared_object!(CONE));
+            server.dirty += 1;
+        }
+    }
+}
+
+pub fn rename_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    rename_general_command(client, server, false);
+}
+
+pub fn renamenx_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    rename_general_command(client, server, true);
+}
+
+pub fn rename_general_command(
+    client: &mut Client,
+    server: &mut Server,
+    nx: bool,
+) {
+    let db = &mut server.db[client.db_idx];
+
+    let value = match db.look_up_key_read(&client.argv[1]) {
+        Some(o) => o,
+        None => {
+            client.add_str_reply("-ERR no such key\r\n");
+            return;
+        }
+    };
+
+    if client.argv[1].borrow().string() == client.argv[2].borrow().string() {
+        if nx {
+            client.add_reply(shared_object!(CZERO));
+        } else {
+            client.add_reply(shared_object!(OK));
+        }
+        return;
+    }
+
+    if let Err(_) = db.dict.add(
+        Rc::clone(&client.argv[2]),
+        Rc::clone(&value),
+    ) {
+        if nx {
+            client.add_reply(shared_object!(CZERO));
+            return;
+        }
+        db.dict.replace(Rc::clone(&client.argv[2]), value);
+    }
+
+    let _ = db.delete_key(&client.argv[1]);
+    if nx {
+        client.add_reply(shared_object!(CONE));
+    } else {
+        client.add_reply(shared_object!(OK));
+    }
+}
+
 pub fn ping_command(
     client: &mut Client,
     server: &mut Server,
     el: &mut AeEventLoop,
 ) {
     client.add_reply(shared_object!(PONG));
+}
+
+pub fn echo_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    add_single_reply(client, Rc::clone(&client.argv[1]));
 }
 
 pub fn command_command(
@@ -1231,14 +1360,17 @@ const CMD_TABLE: &[Command] = &[
     Command { name: "sdiff", proc: sdiff_command, arity: -2, flags: CMD_INLINE },
     Command { name: "sdiffstore", proc: sdiffstore_command, arity: -3, flags: CMD_INLINE },
     Command { name: "smembers", proc: smembers_command, arity: 2, flags: CMD_INLINE },
-    // TODO
     Command { name: "incrby", proc: incr_by_command, arity: 3, flags: CMD_INLINE },
     Command { name: "decrby", proc: decr_by_command, arity: 3, flags: CMD_INLINE },
     Command { name: "getset", proc: get_set_command, arity: 3, flags: CMD_INLINE },
-    // TODO
+    Command { name: "randomkey", proc: randomkey_command, arity: 1, flags: CMD_INLINE },
     Command { name: "select", proc: select_command, arity: 2, flags: CMD_INLINE },
+    Command { name: "move", proc: move_command, arity: 3, flags: CMD_INLINE },
+    Command { name: "rename", proc: rename_command, arity: 3, flags: CMD_INLINE },
+    Command { name: "renamenx", proc: renamenx_command, arity: 3, flags: CMD_INLINE },
     // TODO
     Command { name: "ping", proc: ping_command, arity: 1, flags: CMD_INLINE },
+    Command { name: "echo", proc: echo_command, arity: 2, flags: CMD_INLINE },
     // TODO
     Command { name: "object", proc: object_command, arity: -2, flags: CMD_INLINE },
     Command { name: "command", proc: command_command, arity: 1, flags: CMD_INLINE },

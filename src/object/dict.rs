@@ -347,7 +347,8 @@ impl<K, V> Dict<K, V>
         let mut which: usize = rng.gen_range(0, bucket);
 
         loop {
-            let mut idx = which;
+            let mut idx: usize = which;
+            let mut list_len: usize = 0;
 
             let ht = if idx >= self.ht[0].size {
                 idx -= self.ht[0].size;
@@ -356,8 +357,17 @@ impl<K, V> Dict<K, V>
                 &self.ht[0]
             };
 
-            if let Some(e) = ht.table[idx].as_ref() {
-                return (&e.key, &e.value)
+            for _ in ht.iter(idx) {
+                list_len += 1;
+            }
+
+            if list_len > 0 {
+                let n = rng.gen_range(0, list_len);
+                let kv = ht.iter(idx)
+                    .skip(n)
+                    .next()
+                    .unwrap();
+                return kv;
             }
 
             which = (which + 1) % bucket;
