@@ -607,19 +607,11 @@ pub fn sadd_command(
     el: &mut AeEventLoop,
 ) {
     let db = &mut server.db[client.db_idx];
-
-    let r = bytes_to_i64(client.argv[2].borrow().string());
-
-    let new = to_int_if_needed(&client.argv[2]);
-
     let mut old_len: usize = 0;
 
     let set_obj = match db.look_up_key_read(&client.argv[1]) {
         None => {
-            let o = match r {
-                Ok(_) => Robj::create_int_set_object(),
-                Err(_) => Robj::create_set_object(),
-            };
+            let o = Robj::create_int_set_object();
             let _ = db.dict.add(Rc::clone(&client.argv[1]), Rc::clone(&o));
             o
         }
@@ -633,9 +625,7 @@ pub fn sadd_command(
         }
     };
 
-    let _ = set_obj.borrow_mut().set_add(new);
-
-    for idx in 3..client.argv.len() {
+    for idx in 2..client.argv.len() {
         let new = to_int_if_needed(&client.argv[idx]);
         let _ = set_obj.borrow_mut().set_add(new);
     }
@@ -877,20 +867,32 @@ pub fn sinter_command(
     server: &mut Server,
     el: &mut AeEventLoop,
 ) {
-    let db = &mut server.db[client.db_idx];
-    let sets: Vec<RobjPtr> = Vec::with_capacity(client.argc());
+    sinter_general_command(client, server, None);
+}
+
+pub fn sinterstore_command(
+    client: &mut Client,
+    server: &mut Server,
+    el: &mut AeEventLoop,
+) {
+    let mut new_set = Robj::create_int_set_object();
+    let new_key = client.argv.drain(1..2).next().unwrap();
+    sinter_general_command(client, server, Some(Rc::clone(&new_set)));
+    if new_set.borrow().set_len() > 0 {
+        server.db[client.db_idx].dict.replace(new_key, new_set);
+    }
 }
 
 fn sinter_general_command(
     client: &mut Client,
     server: &mut Server,
-    dst: Option<RobjPtr>,
+    mut dst: Option<RobjPtr>,
 ) {
     let db = &mut server.db[client.db_idx];
     let mut sets: Vec<RobjPtr> = Vec::with_capacity(client.argc());
 
     for key in client.argv.iter().skip(1) {
-        let set_obj = match db.look_up_key_read(&client.argv[1]) {
+        let set_obj = match db.look_up_key_read(key) {
             None => {
                 client.add_reply(shared_object!(EMPTY_MULTI_BULK));
                 return;
@@ -907,26 +909,28 @@ fn sinter_general_command(
     }
 
     sets.sort_by(|l, r| {
-        match l.borrow().set_len() < r.borrow().set_len() {
-            true => Ordering::Less,
-            false => Ordering::Greater,
-        }
+        l.borrow().set_len().cmp(&r.borrow().set_len())
     });
 
-    unimplemented!()
+    let obj_ref = sets[0].borrow();
+    let iter = obj_ref.set_inter_iter(&sets[1..]);
+    let mut cnt: usize = 0;
+    let num = Robj::create_string_object("");
+    client.add_reply(Rc::clone(&num));
 
-//    let iter = sets[0].borrow().set_inter_iter(&sets[1..]);
-//
-//    let cnt: usize = 0;
-//    let num = Robj::create_string_object("");
-//    client.add_reply(Rc::clone(&num));
-//
-//    for r in iter {
-//        add_single_reply(client, r);
-//        cnt += 1;
-//    }
-//
-//    num.borrow_mut().change_to_str(&format!("*{}\r\n", cnt));
+    for r in iter {
+        match dst.as_mut() {
+            None => add_single_reply(client, r),
+            Some(set) => { set.borrow_mut().set_add(r); }
+        }
+        cnt += 1;
+    }
+
+    match dst.as_ref() {
+        None => num.borrow_mut().change_to_str(&format!("*{}\r\n", cnt)),
+        Some(r) =>
+            num.borrow_mut().change_to_str(&format!(":{}\r\n", r.borrow().set_len())),
+    }
 }
 
 pub fn incr_by_command(
@@ -1109,6 +1113,8 @@ const CMD_TABLE: &[Command] = &[
     Command { name: "sismember", proc: sismember_command, arity: 3, flags: CMD_INLINE },
     Command { name: "scard", proc: scard_command, arity: 2, flags: CMD_INLINE },
     Command { name: "spop", proc: spop_command, arity: 2, flags: CMD_INLINE },
+    Command { name: "sinter", proc: sinter_command, arity: -2, flags: CMD_INLINE },
+    Command { name: "sinterstore", proc: sinterstore_command, arity: -3, flags: CMD_INLINE },
     Command { name: "smembers", proc: smembers_command, arity: 2, flags: CMD_INLINE },
     // TODO
     Command { name: "incrby", proc: incr_by_command, arity: 3, flags: CMD_INLINE },

@@ -588,12 +588,18 @@ impl Robj {
                 set.add(o, ())
             }
             RobjEncoding::IntSet => {
+                let i: i64;
                 if o.borrow().encoding != RobjEncoding::Int {
-                    self.set_update_add(o)
+                    let r = o.borrow().object_to_long();
+                    match r {
+                        Ok(n) => i = n,
+                        Err(_) => return self.set_update_add(o),
+                    }
                 } else {
-                    let set = self.ptr.int_set_mut();
-                    set.add(o.borrow().integer())
+                    i = o.borrow().integer();
                 }
+                let set = self.ptr.int_set_mut();
+                set.add(i)
             }
             _ => unreachable!()
         }
@@ -781,7 +787,7 @@ impl SetWrapper for IntSet {
     }
 }
 
-impl <'a> Iterator for SWInterIter<'a> {
+impl<'a> Iterator for SWInterIter<'a> {
     type Item = RobjPtr;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -794,7 +800,7 @@ impl <'a> Iterator for SWInterIter<'a> {
                 i += 1;
             }
             if i == self.others.len() {
-                return Some(o)
+                return Some(o);
             }
         }
         None
