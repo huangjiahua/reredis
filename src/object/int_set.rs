@@ -1,4 +1,5 @@
 use std::mem;
+use std::convert::TryInto;
 
 pub struct IntSet(Vec<u8>);
 
@@ -235,6 +236,30 @@ impl<'a> Iterator for Iter<'a> {
     }
 }
 
+#[cfg(target_endian = "little")]
+fn _serialize_i64(i: i64) -> [u8; mem::size_of::<i64>()] {
+    i.to_le_bytes()
+}
+
+#[cfg(target_endian = "little")]
+fn _i64_from(b: &[u8]) -> i64 {
+    let (int_bytes, _) = b.split_at(std::mem::size_of::<i64>());
+    i64::from_le_bytes(int_bytes.try_into().unwrap())
+}
+
+#[cfg(target_endian = "big")]
+fn _serialize_i64(i: i64) -> [u8; mem::size_of::<i64>()] {
+    i.to_be_bytes()
+}
+
+#[cfg(target_endian = "big")]
+fn _i64_from(b: &[u8]) -> i64 {
+    let (int_bytes, _) = b.split_at(std::mem::size_of::<i64>());
+    i64::from_be_bytes(int_bytes.try_into().unwrap())
+}
+
+
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -266,23 +291,23 @@ mod test {
     #[test]
     fn simple_add() {
         let mut set = IntSet::new();
-        set.add(1);
-        set.add(2);
+        set.add(1).unwrap();
+        set.add(2).unwrap();
         assert_eq!(set.get(0), 1);
         assert_eq!(set.get(1), 2);
-        set.add(32767);
-        set.add(-32768);
+        set.add(32767).unwrap();
+        set.add(-32768).unwrap();
         assert_eq!(set.get(0), -32768);
         assert_eq!(set.get(3), 32767);
 
-        set.add(32768);
+        set.add(32768).unwrap();
         assert_eq!(set.get(0), -32768);
         assert_eq!(set.get(1), 1);
         assert_eq!(set.get(2), 2);
         assert_eq!(set.get(3), 32767);
         assert_eq!(set.get(4), 32768);
 
-        set.add(std::i64::MAX);
+        set.add(std::i64::MAX).unwrap();
         assert_eq!(set.get(0), -32768);
         assert_eq!(set.get(1), 1);
         assert_eq!(set.get(2), 2);
@@ -374,11 +399,11 @@ mod test {
             assert!(!set.find(i));
 
             assert!(set.find(std::i32::MIN as i64 + i));
-            set.remove(std::i32::MIN as i64 + i);
+            set.remove(std::i32::MIN as i64 + i).unwrap();
             assert!(!set.find(std::i32::MIN as i64 + i));
 
             assert!(set.find(std::i32::MAX as i64 + i));
-            set.remove(std::i32::MAX as i64 + i);
+            set.remove(std::i32::MAX as i64 + i).unwrap();
             assert!(!set.find(std::i32::MAX as i64 + i));
 
             assert!(!set.find(-i - 1));
