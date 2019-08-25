@@ -1,4 +1,4 @@
-use std::{mem, fmt};
+use std::mem;
 use std::marker::PhantomData;
 use std::iter::FromIterator;
 
@@ -99,7 +99,7 @@ impl<T> LinkedList<T> {
         })
     }
 
-    unsafe fn unlink_node(&mut self, mut node: *mut Node<T>) -> Option<*mut Node<T>> {
+    unsafe fn unlink_node(&mut self, node: *mut Node<T>) -> Option<*mut Node<T>> {
         match (*node).prev {
             Some(prev) => (*prev).next = (*node).next.clone(),
             None => self.head = (*node).next.clone(),
@@ -287,7 +287,7 @@ impl<T> LinkedList<T> {
                     n -= 1;
                     node = self.unlink_node(ptr);
                     // drain this node
-                    let free = Box::from_raw(ptr);
+                    let _ = Box::from_raw(ptr);
                 } else {
                     node = (*ptr).next;
                 }
@@ -312,7 +312,7 @@ impl<T> LinkedList<T> {
                     self.unlink_node(ptr);
                     node = (*ptr).prev;
                     // drain this node
-                    let free = Box::from_raw(ptr);
+                    let _ = Box::from_raw(ptr);
                 } else {
                     node = (*ptr).prev
                 }
@@ -343,7 +343,7 @@ impl<T> FromIterator<T> for LinkedList<T> {
 }
 
 impl<T> PartialEq for LinkedList<T> {
-    fn eq(&self, other: &Self) -> bool {
+    fn eq(&self, _other: &Self) -> bool {
         unimplemented!()
     }
 }

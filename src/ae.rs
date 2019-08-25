@@ -2,13 +2,11 @@ use mio::*;
 use std::time::{SystemTime, Duration};
 use std::ops::Add;
 use std::error::Error;
-use std::alloc::System;
 use std::rc::Rc;
 use mio::net::{TcpListener, TcpStream};
 use crate::server::Server;
 use std::cell::RefCell;
 use crate::client::*;
-use std::net::Shutdown::Read;
 use std::collections::VecDeque;
 
 type AeTimeProc = fn(server: &mut Server, el: &mut AeEventLoop, id: i64, data: &ClientData) -> i32;
@@ -65,11 +63,13 @@ impl Fdp {
     }
 }
 
-fn _default_ae_time_proc(server: &mut Server, el: &mut AeEventLoop, id: i64, data: &ClientData) -> i32 { 1 }
+fn _default_ae_time_proc(_server: &mut Server, _el: &mut AeEventLoop, _id: i64,
+                         _data: &ClientData) -> i32 { 1 }
 
-pub fn default_ae_file_proc(server: &mut Server, el: &mut AeEventLoop, fd: &Fd, data: &ClientData, mask: i32) {}
+pub fn default_ae_file_proc(_server: &mut Server, _el: &mut AeEventLoop,
+                            _fd: &Fd, _data: &ClientData, _mask: i32) {}
 
-pub fn default_ae_event_finalizer_proc(el: &mut AeEventLoop, data: &ClientData) {}
+pub fn default_ae_event_finalizer_proc(_el: &mut AeEventLoop, _data: &ClientData) {}
 
 pub struct AeEventLoop {
     time_event_next_id: i64,
@@ -92,7 +92,7 @@ impl AeEventLoop {
             poll: Poll::new().unwrap(),
             stop: false,
         };
-        for i in 0..n {
+        for _ in 0..n {
             el.file_events.push(None);
         }
         el
@@ -126,7 +126,7 @@ impl AeEventLoop {
         client_data: ClientData,
         finalizer_proc: AeEventFinalizerProc,
     ) -> Result<(), ()> {
-        let mut fe = AeFileEvent {
+        let fe = AeFileEvent {
             fd,
             mask,
             r_file_proc: file_proc,
@@ -200,7 +200,7 @@ impl AeEventLoop {
     ) -> i64 {
         let id = self.time_event_next_id;
         self.time_event_next_id += 1;
-        let mut te = AeTimeEvent {
+        let te = AeTimeEvent {
             id,
             when: SystemTime::now().add(duration),
             time_proc,
@@ -268,7 +268,7 @@ impl AeEventLoop {
             }
 
             let mut events = Events::with_capacity(self.file_events_num + 1);
-            let event_num = poll.poll(&mut events, wait)?;
+            let _ = poll.poll(&mut events, wait)?;
             for event in &events {
                 let t = event.token();
 
@@ -349,7 +349,6 @@ struct AeTimeEvent {
 fn _ae_wait(fd: &Fd, mask: i32, duration: Duration) -> Result<i32, Box<dyn Error>> {
     let poll = Poll::new()?;
     let mut ready: Ready = Ready::empty();
-    let ret_mask: i32 = 0;
     if mask & AE_READABLE != 0 {
         ready |= Ready::readable();
     }

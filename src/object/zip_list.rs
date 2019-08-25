@@ -2,7 +2,6 @@ use std::mem;
 use std::iter::Chain;
 use std::iter::Cloned;
 use std::slice;
-use std::cell::RefCell;
 use crate::util::bytes_to_i64;
 
 const ZIP_LIST_I16_ENC: u8 = 0b1100_0000;
@@ -103,7 +102,7 @@ impl Encoding {
                 _ => {}
             }
         }
-        v |= ((self.unwrap_str() >> ((len - idx - 1) * 8)) & 0xff);
+        v |= (self.unwrap_str() >> ((len - idx - 1) * 8)) & 0xff;
         v as u8
     }
 
@@ -397,12 +396,12 @@ impl<'a> ZipListNodeMut<'a> {
         Node::new(&self.list.0[self.off..]).value()
     }
 
-    pub fn insert(mut self, x: &[u8]) -> ZipListNodeMut<'a> {
+    pub fn insert(self, x: &[u8]) -> ZipListNodeMut<'a> {
         self.list.inner_insert(self.off, x);
         self
     }
 
-    pub fn delete(mut self) -> ZipListNodeMut<'a> {
+    pub fn delete(self) -> ZipListNodeMut<'a> {
         if self.at_end() {
             panic!("can't delete at the end of zip_list");
         }
@@ -410,7 +409,7 @@ impl<'a> ZipListNodeMut<'a> {
         self
     }
 
-    pub fn delete_range(mut self, num: usize) -> ZipListNodeMut<'a> {
+    pub fn delete_range(self, num: usize) -> ZipListNodeMut<'a> {
         if self.at_end() {
             panic!("can't delete at the end of zip_list");
         }
@@ -1022,7 +1021,7 @@ mod test {
 
         assert_eq!(cnt, 500);
 
-        for p in list.iter().zip((0..500i64)) {
+        for p in list.iter().zip(0..500i64) {
             assert_eq!(p.0.unwrap_int(), p.1);
             cnt -= 1;
         }
@@ -1068,7 +1067,7 @@ mod test {
         list.push(&data2);
         list.push(&data2);
         list.push(&data2);
-        let mut h = list.find_mut(&data1).unwrap().delete();
+        let h = list.find_mut(&data1).unwrap().delete();
         assert_eq!(h.value().unwrap_bytes(), &data2[..]);
     }
 

@@ -3,7 +3,6 @@ use std::fs::File;
 use crate::ae::*;
 use mio::net::TcpListener;
 use std::rc::Rc;
-use std::error::Error;
 use std::cell::RefCell;
 use crate::client::Client;
 use crate::db::DB;

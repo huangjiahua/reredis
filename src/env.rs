@@ -1,10 +1,10 @@
 use crate::server::Server;
 use std::error::Error;
-use crate::ae::{AE_READABLE, default_ae_event_finalizer_proc, AeEventLoop, Fd, Fdp, default_ae_file_proc, AE_WRITABLE};
+use crate::ae::{AE_READABLE, default_ae_event_finalizer_proc, AeEventLoop, Fd, Fdp, default_ae_file_proc};
 use std::rc::Rc;
 use chrono::Local;
 use std::io::{Write, Read, ErrorKind};
-use log::{LevelFilter, Level};
+use log::Level;
 use std::cell::RefCell;
 use crate::client::*;
 use mio::net::TcpStream;
@@ -31,7 +31,7 @@ impl Env {
 
     pub fn reset_server_save_params(&mut self) {}
 
-    pub fn load_server_config(&mut self, filename: &str) {}
+    pub fn load_server_config(&mut self, _filename: &str) {}
 
     pub fn daemonize(&mut self) {}
 
@@ -96,8 +96,8 @@ pub fn accept_handler(
     server: &mut Server,
     el: &mut AeEventLoop,
     fd: &Fd,
-    data: &ClientData,
-    mask: i32,
+    _data: &ClientData,
+    _mask: i32,
 ) {
     let fd = fd.borrow();
     let listener = fd.unwrap_listener();
@@ -114,7 +114,7 @@ pub fn accept_handler(
     };
     debug!("Accepted {}:{}", info.ip(), info.port());
 
-    let mut c = match Client::with_fd(
+    let c = match Client::with_fd(
         Rc::new(RefCell::new(Fdp::Stream(stream))
         ), el) {
         Err(()) => {
@@ -154,7 +154,7 @@ pub fn read_query_from_client(
     el: &mut AeEventLoop,
     fd: &Fd,
     data: &ClientData,
-    mask: i32) {
+    _mask: i32) {
     let client_ptr = Rc::clone(data.unwrap_client());
     let mut fd_ref = fd.as_ref().borrow_mut();
     let stream = fd_ref.unwrap_stream_mut();
@@ -196,7 +196,7 @@ pub fn read_query_from_client(
     let mut client = client_ptr.as_ref().borrow_mut();
 
     loop {
-        if let Some(bulk_len) = client.bulk_len {
+        if let Some(_bulk_len) = client.bulk_len {
             unimplemented!()
         } else {
             let p = client.query_buf
@@ -205,7 +205,7 @@ pub fn read_query_from_client(
                 .find(|x| *x.1 == '\n' as u8)
                 .map(|x| *x.1);
 
-            if let Some(p) = p {
+            if let Some(_) = p {
                 if let Err(e) = client.parse_query_buf() {
                     debug!("{}", e.description());
                     free_client_occupied_in_el(server, el, &client_ptr, stream);
@@ -241,7 +241,7 @@ pub fn send_reply_to_client(
     el: &mut AeEventLoop,
     fd: &Fd,
     data: &ClientData,
-    mask: i32,
+    _mask: i32,
 ) {
     let mut client = data.unwrap_client().as_ref().borrow_mut();
     let mut written_bytes: usize = 0;
@@ -279,10 +279,10 @@ pub fn send_reply_to_client(
 }
 
 pub fn server_cron(
-    server: &mut Server,
-    el: &mut AeEventLoop,
-    id: i64,
-    data: &ClientData,
+    _server: &mut Server,
+    _el: &mut AeEventLoop,
+    _id: i64,
+    _data: &ClientData,
 ) -> i32 {
     1000
 }

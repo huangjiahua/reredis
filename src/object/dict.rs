@@ -312,7 +312,7 @@ impl<K, V> Dict<K, V>
         self.expand_if_needed().unwrap();
 
         let idx = self.hash_value(&key);
-        let mut entry: DictEntry<K, V>;
+        let entry: DictEntry<K, V>;
         let ht: &mut DictTable<K, V>;
 
         match self.try_update(key, value) {
@@ -372,7 +372,6 @@ impl<K, V> Dict<K, V>
 
             which = (which + 1) % bucket;
         }
-        unreachable!()
     }
 
     pub fn enable_resize(&mut self) {
@@ -401,7 +400,7 @@ impl<K, V> Dict<K, V>
 
     fn add_raw(&mut self, key: K, value: V) -> Option<&mut Box<DictEntry<K, V>>> {
         let index;
-        let mut entry: DictEntry<K, V>;
+        let entry: DictEntry<K, V>;
         let ht: &mut DictTable<K, V>;
 
         self.rehash_step_if_needed();
@@ -596,7 +595,7 @@ impl<'a, K, V> Iterator for Iter<'a, K, V>
 
     fn next(&mut self) -> Option<Self::Item> {
         let en = self.entry.take();
-        let mut ret;
+        let ret;
 
         match en {
             None => return None,
@@ -652,7 +651,7 @@ impl<'a, K, V> Iterator for Iter<'a, K, V>
 mod test {
     use super::*;
 
-    fn int_hash_func(i: &usize, seed: u64) -> usize {
+    fn int_hash_func(i: &usize, _seed: u64) -> usize {
         i.clone()
     }
 
@@ -716,7 +715,7 @@ mod test {
         assert!(hd.is_rehashing());
 
         // do rehash for 4 times and there is 0 in the ht[0]
-        for i in 0..4 {
+        for _ in 0..4 {
             hd.find_by_mut(&3);
             assert!(hd.is_rehashing());
         }
@@ -846,12 +845,12 @@ mod test {
     #[test]
     fn bug_detect_1() {
         let mut hd: Dict<usize, usize> = Dict::new(int_hash_func, 0);
-        hd.add(1, 1);
-        hd.delete(&1);
+        hd.add(1, 1).unwrap();
+        hd.delete(&1).unwrap();
         hd.find_by_mut(&1);
-        hd.add(1, 1);
-        hd.add(2, 2);
-        hd.add(3, 3);
+        hd.add(1, 1).unwrap();
+        hd.add(2, 2).unwrap();
+        hd.add(3, 3).unwrap();
         hd.find_by_mut(&1);
         hd.find_by_mut(&2);
         hd.find_by_mut(&3);

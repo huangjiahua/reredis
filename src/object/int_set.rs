@@ -321,8 +321,8 @@ mod test {
     fn simple_set_get(v: i64) {
         let mut set = IntSet::new();
         set.move_tail(0, 1);
-        set.set(0, 1);
-        assert_eq!(set.get(0), 1);
+        set.set(0, v);
+        assert_eq!(set.get(0), v);
     }
 
     #[test]

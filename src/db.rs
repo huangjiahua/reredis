@@ -1,9 +1,8 @@
-use crate::object::{Robj, RobjPtr};
+use crate::object::RobjPtr;
 use crate::object::dict::Dict;
 use crate::hash::string_object_hash;
 use rand::Rng;
 use std::time::SystemTime;
-use mio::Ready;
 use std::rc::Rc;
 
 pub struct DB {
@@ -53,7 +52,7 @@ impl DB {
 
         self.expires.delete(key).unwrap();
 
-        let r = self.dict.delete(key)?;
+        let _ = self.dict.delete(key)?;
 
         Ok(true)
     }
@@ -96,7 +95,7 @@ mod test {
 
     #[test]
     fn create_db() {
-        let db = DB::new(0);
+        let _ = DB::new(0);
     }
 
 //    #[test]

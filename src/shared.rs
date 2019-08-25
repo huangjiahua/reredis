@@ -1,5 +1,4 @@
 use crate::object::{Robj, RobjPtr};
-use std::rc::Rc;
 
 thread_local!(
     pub static CRLF: RobjPtr = Robj::create_string_object("\r\n");

@@ -22,7 +22,6 @@ use crate::hash;
 use rand::prelude::*;
 use crate::object::zip_list::ZipListValue;
 use crate::object::list::ListWhere;
-use std::hint::unreachable_unchecked;
 use crate::util::{bytes_vec, bytes_to_i64};
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -75,7 +74,7 @@ pub struct Robj {
     ptr: Pointer,
 }
 
-trait SetWrapper {
+pub trait SetWrapper {
     fn sw_len(&self) -> usize;
     fn sw_delete(&mut self, o: &RobjPtr) -> Result<(), ()>;
     fn sw_iter<'a>(&'a self) -> Box<dyn Iterator<Item=RobjPtr> + 'a>;
@@ -232,7 +231,7 @@ impl Robj {
 
     pub fn create_set_object() -> RobjPtr {
         let mut rng = rand::thread_rng();
-        let mut num: u64 = rng.gen();
+        let num: u64 = rng.gen();
         let s: Set = Dict::new(hash::string_object_hash, num);
         Self::create_object(
             RobjType::Set,
@@ -250,7 +249,7 @@ impl Robj {
     }
 
     pub fn create_hash_object() -> RobjPtr {
-        let mut num: u64 = rand::thread_rng().gen();
+        let num: u64 = rand::thread_rng().gen();
         let ht: Dict<RobjPtr, RobjPtr> = Dict::new(hash::string_object_hash, num);
         Self::create_object(
             RobjType::Hash,
@@ -304,19 +303,19 @@ impl Robj {
                     self.list_update_push(o, w);
                     return;
                 }
-                let mut l = self.ptr.zip_list_mut();
+                let l = self.ptr.zip_list_mut();
                 match w {
                     ListWhere::Tail => {
                         l.push(o.borrow().string());
                     }
                     ListWhere::Head => {
-                        let mut node = l.front_mut();
+                        let node = l.front_mut();
                         node.insert(o.borrow().string());
                     }
                 }
             }
             RobjEncoding::LinkedList => {
-                let mut l = self.ptr.linked_list_mut();
+                let l = self.ptr.linked_list_mut();
                 match w {
                     ListWhere::Tail => l.push_back(o),
                     ListWhere::Head => l.push_front(o),
@@ -356,7 +355,7 @@ impl Robj {
 
     pub fn list_pop(&mut self, w: ListWhere) -> Option<RobjPtr> {
         if self.encoding == RobjEncoding::ZipList {
-            let mut l = self.ptr.zip_list_mut();
+            let l = self.ptr.zip_list_mut();
             let node = match w {
                 ListWhere::Head => l.front_mut(),
                 ListWhere::Tail => l.tail_mut(),
@@ -372,7 +371,7 @@ impl Robj {
             node.delete();
             Some(ret)
         } else if self.encoding == RobjEncoding::LinkedList {
-            let mut l = self.ptr.linked_list_mut();
+            let l = self.ptr.linked_list_mut();
             match w {
                 ListWhere::Head => l.pop_front(),
                 ListWhere::Tail => l.pop_back(),
@@ -426,7 +425,7 @@ impl Robj {
     }
 
     fn linked_list_set(&mut self, idx: usize, o: RobjPtr) -> Result<(), ()> {
-        let mut l = self.ptr.linked_list_mut();
+        let l = self.ptr.linked_list_mut();
 
         if l.len() <= idx {
             return Err(());
@@ -438,14 +437,14 @@ impl Robj {
     }
 
     fn zip_list_set(&mut self, idx: usize, o: RobjPtr) -> Result<(), ()> {
-        let mut l = self.ptr.zip_list_mut();
+        let l = self.ptr.zip_list_mut();
 
         if l.len() <= idx {
             return Err(());
         }
 
         let mut node = l.front_mut();
-        for i in 0..idx {
+        for _ in 0..idx {
             node = node.move_next();
         }
 
@@ -489,7 +488,7 @@ impl Robj {
             return;
         }
         let l = self.ptr.zip_list_mut();
-        let mut real_end = l.len();
+        let real_end = l.len();
         for _ in end + 1..real_end {
             l.tail_mut().delete();
         }
@@ -606,7 +605,7 @@ impl Robj {
     }
 
     fn set_update_add(&mut self, o: RobjPtr) -> Result<(), ()> {
-        let mut num: u64 = rand::thread_rng().gen();
+        let num: u64 = rand::thread_rng().gen();
         let old: &IntSet = self.ptr.int_set_ref();
         let mut s: Set = Dict::new(hash::string_object_hash, num);
         for i in old.iter() {
@@ -748,7 +747,7 @@ impl SetWrapper for Set {
     fn sw_pop_random(&mut self) -> RobjPtr {
         let (o, _) = self.random_key_value();
         let o = Rc::clone(o);
-        self.delete(&o);
+        let _ = self.delete(&o);
         Rc::clone(&o)
     }
 }
@@ -782,7 +781,7 @@ impl SetWrapper for IntSet {
     fn sw_pop_random(&mut self) -> RobjPtr {
         let which: usize = rand::thread_rng().gen_range(0, self.len());
         let i = self.get(which);
-        self.remove(i);
+        let _ = self.remove(i);
         Robj::create_string_object_from_long(i)
     }
 }
@@ -814,7 +813,7 @@ mod test {
 
     #[test]
     fn create_new_object() {
-        let o: RobjPtr = Robj::create_object(
+        let _o: RobjPtr = Robj::create_object(
             RobjType::String,
             RobjEncoding::Raw,
             Box::new(bytes_vec(b"hello")),
@@ -823,10 +822,10 @@ mod test {
 
     #[test]
     fn create_new_string_object() {
-        let o: RobjPtr = Robj::create_string_object("foo");
-        let o2: RobjPtr = Robj::create_raw_string_object("bar");
-        let o3: RobjPtr = Robj::create_embedded_string_object("hey");
-        let o4: RobjPtr = Robj::create_bytes_object(b"foo");
+        let _o: RobjPtr = Robj::create_string_object("foo");
+        let _o2: RobjPtr = Robj::create_raw_string_object("bar");
+        let _o3: RobjPtr = Robj::create_embedded_string_object("hey");
+        let _o4: RobjPtr = Robj::create_bytes_object(b"foo");
     }
 
     #[test]

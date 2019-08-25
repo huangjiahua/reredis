@@ -5,10 +5,7 @@ use crate::env::{read_query_from_client, send_reply_to_client};
 use std::cell::RefCell;
 use crate::object::{RobjPtr, Robj};
 use crate::protocol;
-use std::error::Error;
-use std::fmt::Display;
 use crate::server::Server;
-use mio::net::TcpStream;
 use crate::command::{lookup_command, CMD_BULK};
 use crate::util::*;
 
@@ -197,7 +194,6 @@ impl CommandError {
             Self::Close => "Client close",
             Self::Unknown => "Unknown command",
             Self::WrongNumber => "Wrong number of arguments",
-            _ => "",
         }
     }
 }

@@ -1,8 +1,7 @@
-use crate::object::{Robj, RobjPtr};
+use crate::object::RobjPtr;
 use crate::object::skip_list::SkipList;
 use crate::object::dict::Dict;
 use crate::hash;
-use std::iter::Skip;
 use rand::prelude::*;
 
 pub struct Zset {

@@ -1,9 +1,7 @@
 use std::rc::{Rc, Weak};
-use crate::object::{RobjPtr, Robj, RobjType};
+use crate::object::{RobjPtr, Robj};
 use rand::prelude::*;
-use std::iter::Skip;
-use std::cell::{Ref, RefCell};
-use std::ops::Range;
+use std::cell::RefCell;
 use std::iter::Iterator;
 
 const SKIP_LIST_MAX_LEVEL: usize = 32;
@@ -137,7 +135,7 @@ impl SkipList {
         let mut update: Vec<Option<Rc<RefCell<SkipListNode>>>> =
             Vec::with_capacity(SKIP_LIST_MAX_LEVEL);
 
-        for i in 0..SKIP_LIST_MAX_LEVEL {
+        for _ in 0..SKIP_LIST_MAX_LEVEL {
             update.push(None)
         }
 
@@ -461,7 +459,7 @@ impl RangeSpec {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::object::{Robj, RobjPtr};
+    use crate::object::Robj;
 
     #[test]
     fn create_new_skip_list() {
@@ -474,7 +472,7 @@ mod test {
     #[ignore]
     fn generate_rand_level() {
         let mut levels = vec![0usize; 33];
-        for i in 0..1000000 {
+        for _ in 0..1000000 {
             let l = SkipList::random_level();
             levels[l] += 1;
         }
