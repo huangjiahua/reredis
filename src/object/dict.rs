@@ -287,14 +287,24 @@ impl<K, V> Dict<K, V>
             }
         }
 
-        Iter {
-            d: self,
-            table,
-            index,
-            save: false,
-            entry: self.ht[table].table[index]
-                .as_ref()
-                .map(|e| &**e),
+        if self.len() > 0 {
+            Iter {
+                d: self,
+                table,
+                index,
+                save: false,
+                entry: self.ht[table].table[index]
+                    .as_ref()
+                    .map(|e| &**e),
+            }
+        } else {
+            Iter {
+                d: self,
+                table,
+                index,
+                save: false,
+                entry: None,
+            }
         }
     }
 
@@ -802,6 +812,15 @@ mod test {
         }
 
         assert_eq!(cnt, 4);
+    }
+
+    #[test]
+    fn iterate_empty_table() {
+        let hd: Dict<usize, usize> = Dict::new(int_hash_func, 0);
+        let v: Vec<usize> = hd.iter()
+            .map(|x| *x.1)
+            .collect();
+        assert_eq!(v.len(), 0);
     }
 
     #[test]

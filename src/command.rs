@@ -7,6 +7,7 @@ use crate::shared::{OK, NULL_BULK, CRLF, CZERO, CONE, COLON, WRONG_TYPE, PONG, E
 use crate::util::*;
 use crate::object::{Robj, RobjPtr, RobjEncoding, RobjType};
 use crate::object::list::ListWhere;
+use crate::glob::*;
 use rand::Rng;
 use std::time::{SystemTime, Duration};
 
@@ -1267,6 +1268,31 @@ pub fn expire_command(
     }
 }
 
+pub fn keys_command(
+    client: &mut Client,
+    server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    let db = &mut server.db[client.db_idx];
+    let pat_obj = Rc::clone(&client.argv[1]);
+    let pat_ref = pat_obj.borrow();
+    let pat = pat_ref.string();
+
+    let num = Robj::create_string_object(&format!("*{}\r\n", 0));
+    let mut n: usize = 0;
+    client.add_reply(Rc::clone(&num));
+
+    for key in db.dict.iter()
+        .map(|x| x.0)
+        .filter(|x|
+            glob_match(pat, x.borrow().string(), false)) {
+        add_single_reply(client, Rc::clone(&key));
+        n += 1;
+    }
+
+    num.borrow_mut().change_to_str(&format!("*{}\r\n", n));
+}
+
 pub fn dbsize_command(
     client: &mut Client,
     server: &mut Server,
@@ -1442,7 +1468,7 @@ const CMD_TABLE: &[Command] = &[
     Command { name: "rename", proc: rename_command, arity: 3, flags: CMD_INLINE },
     Command { name: "renamenx", proc: renamenx_command, arity: 3, flags: CMD_INLINE },
     Command { name: "expire", proc: expire_command, arity: 3, flags: CMD_INLINE },
-    // TODO
+    Command { name: "keys", proc: keys_command, arity: 2, flags: CMD_INLINE },
     Command { name: "dbsize", proc: dbsize_command, arity: 1, flags: CMD_INLINE },
     // TODO
     Command { name: "ping", proc: ping_command, arity: 1, flags: CMD_INLINE },

@@ -1,6 +1,6 @@
 use std::mem::swap;
 
-fn glob_match(pattern: &[u8], string: &[u8], no_case: bool) -> bool {
+pub fn glob_match(pattern: &[u8], string: &[u8], no_case: bool) -> bool {
     let mut pattern = pattern;
     let mut string = string;
     let mut last_pattern: &[u8];
@@ -8,7 +8,7 @@ fn glob_match(pattern: &[u8], string: &[u8], no_case: bool) -> bool {
     while pattern.len() > 0 {
         match pattern[0] {
             b'*' => {
-                while pattern[1] == b'*' {
+                while pattern.len() > 1 && pattern[1] == b'*' {
                     pattern = &pattern[1..];
                 }
                 if pattern.len() == 1 {
@@ -154,6 +154,8 @@ mod test {
 
     #[test]
     fn test_wildcards() {
+        case_match("*", "k");
+        case_match("*", "tvp");
         case_match("a*b", "a_b");
         case_match("a*b*c", "abc");
         case_not_match("a*b*c", "abcd");
