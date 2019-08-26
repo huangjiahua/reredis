@@ -4,10 +4,11 @@ use crate::client::Client;
 use crate::server::Server;
 use crate::ae::AeEventLoop;
 use crate::shared::{OK, NULL_BULK, CRLF, CZERO, CONE, COLON, WRONG_TYPE, PONG, EMPTY_MULTI_BULK};
-use crate::util::case_eq;
+use crate::util::*;
 use crate::object::{Robj, RobjPtr, RobjEncoding, RobjType};
 use crate::object::list::ListWhere;
 use rand::Rng;
+use std::time::{SystemTime, Duration};
 
 
 type CommandProc = fn(
@@ -1226,6 +1227,53 @@ pub fn rename_general_command(
     } else {
         client.add_reply(shared_object!(OK));
     }
+    server.dirty += 1;
+}
+
+pub fn expire_command(
+    client: &mut Client,
+    server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    let r = {
+        let obj_ref = client.argv[2].borrow();
+        bytes_to_usize(obj_ref.string())
+    };
+    let seconds = match r {
+        Err(_) => {
+            client.add_reply(shared_object!(CZERO));
+            return;
+        }
+        Ok(i) => i,
+    };
+    let db = &mut server.db[client.db_idx];
+
+    match db.look_up_key_read(&client.argv[1]) {
+        None => {
+            client.add_reply(shared_object!(CZERO));
+            return;
+        }
+        Some(_) => {
+            let when: SystemTime =
+                SystemTime::now() + Duration::from_secs(seconds as u64);
+            match db.set_expire(Rc::clone(&client.argv[1]), when) {
+                Ok(_) => {
+                    client.add_reply(shared_object!(CONE));
+                    server.dirty += 1;
+                }
+                Err(_) => client.add_reply(shared_object!(CZERO)),
+            }
+        }
+    }
+}
+
+pub fn dbsize_command(
+    client: &mut Client,
+    server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    let db = &server.db[client.db_idx];
+    client.add_reply(gen_usize_reply(db.dict.len()));
 }
 
 pub fn ping_command(
@@ -1250,6 +1298,33 @@ pub fn command_command(
     _el: &mut AeEventLoop,
 ) {
     client.add_reply(shared_object!(OK));
+}
+
+pub fn ttl_command(
+    client: &mut Client,
+    server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    let db = &mut server.db[client.db_idx];
+
+    match db.get_expire(&client.argv[1]) {
+        Some(t) => {
+            let now = SystemTime::now();
+            if *t < now {
+                let _ = db.delete_key(&client.argv[1]);
+                client.add_str_reply(&format!(":{}\r\n", -2));
+            } else {
+                let second: u64 = t.duration_since(now).unwrap().as_secs();
+                client.add_str_reply(&format!(":{}\r\n", second));
+            };
+        }
+        None => {
+            match db.look_up_key_read(&client.argv[1]) {
+                None => client.add_str_reply(&format!(":{}\r\n", -2)),
+                Some(_) => client.add_str_reply(&format!(":{}\r\n", -1)),
+            }
+        }
+    }
 }
 
 pub fn object_command(
@@ -1366,10 +1441,14 @@ const CMD_TABLE: &[Command] = &[
     Command { name: "move", proc: move_command, arity: 3, flags: CMD_INLINE },
     Command { name: "rename", proc: rename_command, arity: 3, flags: CMD_INLINE },
     Command { name: "renamenx", proc: renamenx_command, arity: 3, flags: CMD_INLINE },
+    Command { name: "expire", proc: expire_command, arity: 3, flags: CMD_INLINE },
+    // TODO
+    Command { name: "dbsize", proc: dbsize_command, arity: 1, flags: CMD_INLINE },
     // TODO
     Command { name: "ping", proc: ping_command, arity: 1, flags: CMD_INLINE },
     Command { name: "echo", proc: echo_command, arity: 2, flags: CMD_INLINE },
     // TODO
+    Command { name: "ttl", proc: ttl_command, arity: 2, flags: CMD_INLINE },
     Command { name: "object", proc: object_command, arity: -2, flags: CMD_INLINE },
     Command { name: "command", proc: command_command, arity: 1, flags: CMD_INLINE },
 ];
