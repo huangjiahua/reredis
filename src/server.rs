@@ -6,55 +6,89 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use crate::client::Client;
 use crate::db::DB;
+use crate::env::Config;
+use std::net::SocketAddr;
+use std::time::SystemTime;
 
 
 pub struct Server {
-    pub stat_num_connections: usize,
-    pub stat_num_commands: usize,
-
-    pub require_pass: Option<Vec<u8>>,
-
-    pub max_clients: usize,
-    pub clients: Vec<Rc<RefCell<Client>>>,
-    pub fd: Fd,
-    // port
     pub port: u16,
-    // min log level
-    pub verbosity: LevelFilter,
-    // log file
-    pub log_file: Option<File>,
-    // whether server run as a daemon
-    pub daemonize: bool,
-
-    pub dirty: usize,
+    pub fd: Fd,
     pub db: Vec<DB>,
+    // TODO: sharing pool
+    pub dirty: usize,
+    pub clients: Vec<Rc<RefCell<Client>>>,
+    // TODO: slaves and monitors
+    pub cron_loops: usize,
+    pub last_save: SystemTime,
+    pub used_memory: usize,
+
+    // for stats
+    pub stat_start_time: SystemTime,
+    pub stat_num_commands: usize,
+    pub stat_num_connections: usize,
+
+    // configuration
+    pub verbosity: LevelFilter,
+    pub glue_output: bool,
+    pub max_idle_time: usize,
+    pub daemonize: bool,
+    pub bg_save_in_progress: bool,
+    pub bg_save_child_pid: i64,
+    pub save_params: Vec<(usize, usize)>,
+    pub log_file: Option<File>,
+    pub bind_addr: String,
+    pub db_filename: String,
+    pub require_pass: Option<String>,
+    // TODO: replication
+    pub max_clients: usize,
 }
 
 impl Server {
-    pub fn new() -> Server {
+    pub fn new(config: &Config) -> Server {
         // TODO: change this
-        let addr = "127.0.0.1:6379".parse().unwrap();
+        let addr: SocketAddr = format!("{}:{}", config.bind_addr, config.port).parse().unwrap();
         let server = TcpListener::bind(&addr).unwrap();
         let fd = Rc::new(RefCell::new(Fdp::Listener(server)));
 
-        let mut db: Vec<DB> = Vec::with_capacity(12);
-        for i in 0..12 {
+        let mut db: Vec<DB> = Vec::with_capacity(config.db_num);
+        for i in 0..config.db_num {
             db.push(DB::new(i));
         }
 
+        let log_file = match &config.log_file {
+            Some(f) => Some(File::open(f).unwrap()),
+            None => None,
+        };
+
         Server {
-            stat_num_connections: 0,
-            stat_num_commands: 0,
-            require_pass: None,
-            max_clients: 100,
-            clients: Vec::new(),
+            port: config.port,
             fd,
-            port: 6379,
-            verbosity: LevelFilter::Debug,
-            log_file: None,
-            daemonize: false,
-            dirty: 0,
             db,
+            dirty: 0,
+            clients: Vec::new(),
+
+            cron_loops: 0,
+            last_save: SystemTime::now(),
+            used_memory: 0,
+
+            stat_start_time: SystemTime::now(),
+            stat_num_commands: 0,
+            stat_num_connections: 0,
+
+            verbosity: config.log_level,
+            glue_output: config.glue_output,
+            max_idle_time: 0,
+            daemonize: config.daemonize,
+            bg_save_in_progress: false,
+            bg_save_child_pid: -1,
+            save_params: config.save_params.clone(),
+            log_file,
+            bind_addr: config.bind_addr.clone(),
+            db_filename: config.db_filename.clone(),
+            require_pass: config.require_pass.clone(),
+
+            max_clients: config.max_clients,
         }
     }
 

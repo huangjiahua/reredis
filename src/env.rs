@@ -4,15 +4,252 @@ use crate::ae::{AE_READABLE, default_ae_event_finalizer_proc, AeEventLoop, Fd, F
 use std::rc::Rc;
 use chrono::Local;
 use std::io::{Write, Read, ErrorKind};
-use log::Level;
+use log::{Level, LevelFilter};
 use std::cell::RefCell;
 use crate::client::*;
 use mio::net::TcpStream;
 use std::time::{Duration, SystemTime};
+use std::fs::File;
+use std::process::exit;
+use std::io;
+use crate::util::*;
+use std::env::set_current_dir;
+use std::fmt;
 
 pub const REREDIS_VERSION: &str = "0.0.1";
 pub const REREDIS_REQUEST_MAX_SIZE: usize = 1024 * 1024 * 256;
 pub const REREDIS_MAX_WRITE_PER_EVENT: usize = 64 * 1024;
+
+pub struct Config {
+    pub config_file: Option<String>,
+    pub max_idle_time: usize,
+    pub port: u16,
+    pub bind_addr: String,
+    pub log_level: LevelFilter,
+    pub log_file: Option<String>,
+    pub db_num: usize,
+    pub max_clients: usize,
+    pub max_memory: usize,
+    pub master_host: Option<String>,
+    pub master_port: u16,
+    pub glue_output: bool,
+    pub daemonize: bool,
+    pub require_pass: Option<String>,
+    pub db_filename: String,
+    pub save_params: Vec<(usize, usize)>,
+}
+
+impl Config {
+    pub fn new() -> Config {
+        Config {
+            config_file: None,
+            max_idle_time: 5 * 60,
+            port: 6379,
+            bind_addr: "127.0.0.1".to_string(),
+            log_level: LevelFilter::Debug,
+            log_file: None,
+            db_num: 16,
+            max_clients: 0,
+            max_memory: 0,
+            master_host: None,
+            master_port: 6379,
+            glue_output: true,
+            daemonize: false,
+            require_pass: None,
+            db_filename: "dump.rdb".to_string(),
+            save_params: vec![(3600, 1), (300, 100), (60, 10000)],
+        }
+    }
+
+    pub fn reset_server_save_params(&mut self) {}
+
+    pub fn config_from_args(&mut self, args: &[String]) {
+        let mut first: bool = false;
+        let mut content: String = String::new();
+        for s in args.iter().skip(1) {
+            if !first && !is_prefix_of("--", s) {
+                Self::args_error(s, "option name should begin with '--'");
+            }
+            first = true;
+            if is_prefix_of("--", s) {
+                fmt::write(&mut content, format_args!("\n{} ", &s[2..])).unwrap();
+            } else {
+                fmt::write(&mut content, format_args!("{} ", s)).unwrap();
+            }
+        }
+        self.load_config_from_string(&content);
+    }
+
+    fn args_error(s: &str, desc: &str) {
+        eprintln!("argument error > {}: {}", s, desc);
+        exit(1);
+    }
+
+    pub fn load_server_config(&mut self, filename: &str) {
+        let mut contents = String::new();
+
+        if filename != "-" {
+            let mut file = File::open(filename).unwrap_or_else(|e| {
+                eprintln!("Fatal error, can't open config file {}: {}",
+                          filename, e.description());
+                exit(1);
+            });
+
+            file.read_to_string(&mut contents).unwrap_or_else(|e| {
+                eprintln!("Fatal error, can't read config file {}: {}",
+                          filename, e.description());
+                exit(1);
+            });
+        } else {
+            let stdin = io::stdin();
+            let mut handle = stdin.lock();
+
+            handle.read_to_string(&mut contents).unwrap_or_else(|e| {
+                eprintln!("Fatal error, can't read config from stdin: {}",
+                          e.description());
+                exit(1);
+            });
+        }
+
+        self.load_config_from_string(&contents[..]);
+    }
+
+    fn load_config_from_string(&mut self, s: &str) {
+        for (i, line) in s.lines().enumerate() {
+            let line = line.trim();
+            let argv: Vec<&str>;
+            let argc: usize;
+            let main: String;
+
+            // skip comments and blank lines
+            if line.len() == 0 || line.as_bytes()[0] == b'#' {
+                continue;
+            }
+
+            argv = line.split_ascii_whitespace().collect();
+            argc = argv.len();
+
+            if argv.is_empty() {
+                continue;
+            }
+
+            main = argv[0].to_ascii_lowercase();
+
+            match (&main[..], argc) {
+                ("timeout", 2) => {
+                    self.max_idle_time = parse_usize(argv[1]).unwrap_or_else(|e| {
+                        Self::load_error(i, line, e.description());
+                        0
+                    });
+                }
+                ("port", 2) => {
+                    self.port = parse_port(argv[1]).unwrap_or_else(|e| {
+                        Self::load_error(i, line, e.description());
+                        0
+                    });
+                }
+                ("bind", 2) => {
+                    self.bind_addr = argv[1].to_string();
+                }
+                ("save", 3) => {
+                    let pair =
+                        parse_usize_pair(argv[1], argv[2]).unwrap_or_else(|e| {
+                            Self::load_error(i, line, e.description());
+                            (0, 0)
+                        });
+                    self.save_params.push(pair);
+                }
+                ("dir", 2) => {
+                    set_current_dir(argv[1]).unwrap_or_else(|e| {
+                        eprint!("Can't change dir to {}: {}", argv[1], e.description());
+                        exit(1);
+                    });
+                }
+                ("loglevel", 2) => {
+                    match argv[1] {
+                        "debug" => self.log_level = LevelFilter::Debug,
+                        "notice" => self.log_level = LevelFilter::Info,
+                        "warning" => self.log_level = LevelFilter::Warn,
+                        _ => Self::load_error(
+                            i, line,
+                            "Invalid log level. Must be one of debug, notice, warning",
+                        ),
+                    }
+                }
+                ("logfile", 2) => {
+                    self.log_file = Some(argv[1].to_string());
+                    if argv[1].eq_ignore_ascii_case("stdout") {
+                        self.log_file = None;
+                    }
+                    if let Some(f) = self.log_file.as_ref() {
+                        let ok = File::open(f);
+                        if let Err(e) = ok {
+                            Self::load_error(i, line, e.description());
+                        }
+                    }
+                }
+                ("databases", 2) => {
+                    let num: i64 = argv[1].parse().unwrap_or(-1);
+                    if num < 1 {
+                        Self::load_error(i, line, "Invalid number of databases");
+                    }
+                    self.db_num = num as usize;
+                }
+                ("maxclients", 2) => {
+                    self.max_clients = parse_usize(argv[1]).unwrap_or_else(|e| {
+                        Self::load_error(i, line, e.description());
+                        0
+                    });
+                }
+                ("maxmemory", 2) => {
+                    let max_memory: usize =
+                        human_size(argv[1]).unwrap_or_else(|_| {
+                            Self::load_error(i, line, "cannot parse size");
+                            0
+                        });
+                    self.max_memory = max_memory;
+                }
+                ("slaveof", 3) => {
+                    self.master_host = Some(argv[1].to_string());
+                    self.master_port = parse_port(argv[2]).unwrap_or_else(|e| {
+                        Self::load_error(i, line, e.description());
+                        0
+                    });
+                }
+                ("glueoutputbuf", 2) => {
+                    self.glue_output = yes_or_no(argv[1]).unwrap_or_else(|| {
+                        Self::load_error(i, line, "must be 'yes' or 'no'");
+                        false
+                    });
+                }
+                ("daemonize", 2) => {
+                    self.daemonize = yes_or_no(argv[1]).unwrap_or_else(|| {
+                        Self::load_error(i, line, "must be 'yes' or 'no'");
+                        false
+                    });
+                }
+                ("requirepass", 2) => {
+                    self.require_pass = Some(argv[1].to_string());
+                }
+                ("dbfilename", 2) => {
+                    self.db_filename = argv[1].to_string();
+                }
+                (_, _) => {
+                    println!("Warning: '{}' is not supported or argument number is incorrect",
+                             main);
+                }
+            }
+        }
+    }
+
+    fn load_error(line_num: usize, line: &str, err: &str) {
+        eprintln!("\n*** FATAL CONFIG FILE ERROR ***");
+        eprintln!("Reading the configuration file, at line {}", line_num);
+        eprintln!(">>> '{}'", line);
+        eprintln!("{}", err);
+        exit(1);
+    }
+}
 
 pub struct Env {
     pub server: Server,
@@ -20,8 +257,8 @@ pub struct Env {
 }
 
 impl Env {
-    pub fn new() -> Env {
-        let server = Server::new();
+    pub fn new(config: &Config) -> Env {
+        let server = Server::new(config);
         let el = AeEventLoop::new(512);
         Env {
             server,

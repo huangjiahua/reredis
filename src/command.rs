@@ -1308,7 +1308,7 @@ pub fn auth_command(
     _el: &mut AeEventLoop,
 ) {
     if server.require_pass.is_none() ||
-        client.argv[1].borrow().string() == &server.require_pass.as_ref().unwrap()[..] {
+        client.argv[1].borrow().string() == server.require_pass.as_ref().unwrap().as_bytes() {
         client.authenticate = true;
         client.add_reply(shared_object!(OK));
     } else {

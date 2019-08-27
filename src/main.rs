@@ -2,26 +2,25 @@
 extern crate log;
 extern crate env_logger;
 
-use reredis::env::{Env, REREDIS_VERSION, init_logger};
+use reredis::env::{Env, REREDIS_VERSION, init_logger, Config};
 use reredis::oom::oom;
-use std::process::exit;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let mut env = Env::new();
+    let mut config = Config::new();
 
     if args.len() == 2 {
-        env.reset_server_save_params();
-        env.load_server_config(&args[1]);
+        config.reset_server_save_params();
+        config.load_server_config(&args[1]);
     } else if args.len() > 2 {
-        eprintln!("Usage: reredis-server [/path/to/reredis.conf]");
-        exit(1);
+        config.config_from_args(&args[..]);
     } else {
         println!("no config file specified, using the default config. \
             In order to specify a config file use 'reredis-server \
             /path/to/reredis.conf'");
     }
 
+    let mut env = Env::new(&config);
     env.init_server();
     init_logger(env.server.verbosity);
 
