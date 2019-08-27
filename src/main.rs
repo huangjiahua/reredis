@@ -4,6 +4,10 @@ extern crate env_logger;
 
 use reredis::env::{Env, REREDIS_VERSION, init_logger, Config};
 use reredis::oom::oom;
+use reredis::zalloc::Zalloc;
+
+#[global_allocator]
+static A: Zalloc = Zalloc;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

@@ -15,6 +15,7 @@ use std::io;
 use crate::util::*;
 use std::env::set_current_dir;
 use std::fmt;
+use crate::zalloc;
 
 pub const REREDIS_VERSION: &str = "0.0.1";
 pub const REREDIS_REQUEST_MAX_SIZE: usize = 1024 * 1024 * 256;
@@ -521,5 +522,7 @@ pub fn server_cron(
     _id: i64,
     _data: &ClientData,
 ) -> i32 {
+    let memory_size = zalloc::allocated_memory();
+    debug!("Used memory: {}", memory_size);
     1000
 }
