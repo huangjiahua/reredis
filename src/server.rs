@@ -9,6 +9,7 @@ use crate::db::DB;
 use crate::env::Config;
 use std::net::SocketAddr;
 use std::time::SystemTime;
+use crate::object::linked_list::LinkedList;
 
 
 pub struct Server {
@@ -17,7 +18,7 @@ pub struct Server {
     pub db: Vec<DB>,
     // TODO: sharing pool
     pub dirty: usize,
-    pub clients: Vec<Rc<RefCell<Client>>>,
+    pub clients: LinkedList<Rc<RefCell<Client>>>,
     // TODO: slaves and monitors
     pub cron_loops: usize,
     pub last_save: SystemTime,
@@ -66,7 +67,7 @@ impl Server {
             fd,
             db,
             dirty: 0,
-            clients: Vec::new(),
+            clients: LinkedList::new(),
 
             cron_loops: 0,
             last_save: SystemTime::now(),
@@ -78,7 +79,7 @@ impl Server {
 
             verbosity: config.log_level,
             glue_output: config.glue_output,
-            max_idle_time: 0,
+            max_idle_time: config.max_idle_time,
             daemonize: config.daemonize,
             bg_save_in_progress: false,
             bg_save_child_pid: -1,
@@ -93,23 +94,47 @@ impl Server {
     }
 
     pub fn free_client(&mut self, c: &Rc<RefCell<Client>>) {
-        for i in 0..self.clients.len() {
-            if Rc::ptr_eq(&c, &self.clients[i]) {
-                self.clients.remove(i);
-                return;
+        let mut i: i64 = -1;
+        for (k, client) in self.clients.iter().enumerate() {
+            if Rc::ptr_eq(&c, client) {
+                i = k as i64;
+                break;
             }
+        }
+        if i >= 0 {
+            let mut tmp = self.clients.split_off(i as usize);
+            tmp.pop_front();
+            self.clients.append(&mut tmp);
         }
     }
 
     pub fn find_client(&self, c: &Client) -> Rc<RefCell<Client>> {
         let ptr1 = c as *const Client;
-        for i in 0..self.clients.len() {
-            let ptr2 = self.clients[i].as_ptr();
+        for client in self.clients.iter() {
+            let ptr2 = client.as_ptr();
             if ptr1 == ptr2 {
-                return Rc::clone(&self.clients[i]);
+                return Rc::clone(client);
             }
         }
         unreachable!()
+    }
+
+    pub fn close_timeout_clients(&mut self, _el: &mut AeEventLoop) {
+        assert!(self.max_idle_time > 0);
+        let now = SystemTime::now();
+        let len = self.clients.len();
+        let max_idle_time = self.max_idle_time;
+        self.clients.delete_first_n_filter(len, |x| {
+            let elapsed =
+                now.duration_since(x.borrow().last_interaction)
+                    .unwrap()
+                    .as_secs() as usize;
+            if elapsed > max_idle_time {
+                true
+            } else {
+                false
+            }
+        })
     }
 
     pub fn flush_db(&mut self, idx: usize) {

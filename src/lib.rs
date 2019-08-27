@@ -2,11 +2,6 @@
 #[macro_use]
 extern crate log;
 extern crate env_logger;
-extern crate jemallocator;
-extern crate jemalloc_sys;
-
-#[global_allocator]
-static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 #[macro_use]
 pub mod shared;
@@ -22,4 +17,4 @@ pub mod protocol;
 pub mod command;
 pub mod util;
 pub mod glob;
-pub mod alloc;
+pub mod zalloc;

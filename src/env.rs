@@ -20,6 +20,7 @@ use crate::zalloc;
 pub const REREDIS_VERSION: &str = "0.0.1";
 pub const REREDIS_REQUEST_MAX_SIZE: usize = 1024 * 1024 * 256;
 pub const REREDIS_MAX_WRITE_PER_EVENT: usize = 64 * 1024;
+pub const REREDIS_EXPIRE_LOOKUPS_PER_CRON: usize = 100;
 
 pub struct Config {
     pub config_file: Option<String>,
@@ -360,7 +361,7 @@ pub fn accept_handler(
             return;
         }
         Ok(e) => {
-            server.clients.push(Rc::clone(&e));
+            server.clients.push_back(Rc::clone(&e));
             e
         }
     };
@@ -517,12 +518,67 @@ pub fn send_reply_to_client(
 }
 
 pub fn server_cron(
-    _server: &mut Server,
-    _el: &mut AeEventLoop,
+    server: &mut Server,
+    el: &mut AeEventLoop,
     _id: i64,
     _data: &ClientData,
 ) -> i32 {
-    let memory_size = zalloc::allocated_memory();
-    debug!("Used memory: {}", memory_size);
+    server.cron_loops += 1;
+
+    // update global state with the amount of used memory
+    server.used_memory = zalloc::allocated_memory();
+
+    let loops = server.cron_loops;
+
+    // show some info about non-empty databases
+    for (i, db) in server.db.iter().enumerate() {
+        let slot: usize = db.dict.slot();
+        let used: usize = db.dict.len();
+        let vkeys: usize = db.expires.len();
+
+        if loops % 5 == 0 && (used != 0 || vkeys != 0) {
+            debug!("DB {}: {} keys ({} volatile) in {} slots HT.", i, used, vkeys, slot);
+        }
+    }
+
+    // show information about connected clients
+    if loops % 5 == 0 {
+        debug!("{} clients connected, {} bytes in use",
+               server.clients.len(), server.used_memory);
+    }
+
+    // close connections of timeout clients
+    if server.max_idle_time > 0 && loops % 10 == 0 {
+        server.close_timeout_clients(el);
+    }
+
+    // check if a background saving in progress terminated
+    if server.bg_save_in_progress {
+        // TODO: check if bg_save finish
+    } else {
+        // TODO: bg_save
+    }
+
+    // try to expire a few timeout keys
+    for db in server.db.iter_mut() {
+        let mut num: usize = db.expires.len();
+
+        if num > 0 {
+            let now: SystemTime = SystemTime::now();
+
+            if num > REREDIS_EXPIRE_LOOKUPS_PER_CRON {
+                num = REREDIS_EXPIRE_LOOKUPS_PER_CRON;
+            }
+
+            for _ in 0..num {
+                let (key, t) = db.expires.random_key_value();
+                if *t < now {
+                    let key = Rc::clone(key);
+                    let _ = db.delete_key(&key);
+                }
+            }
+        }
+    }
+    // TODO: check if we should connect to master
     1000
 }
