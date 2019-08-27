@@ -12,6 +12,8 @@ pub struct Server {
     pub stat_num_connections: usize,
     pub stat_num_commands: usize,
 
+    pub require_pass: Option<Vec<u8>>,
+
     pub max_clients: usize,
     pub clients: Vec<Rc<RefCell<Client>>>,
     pub fd: Fd,
@@ -43,6 +45,7 @@ impl Server {
         Server {
             stat_num_connections: 0,
             stat_num_commands: 0,
+            require_pass: None,
             max_clients: 100,
             clients: Vec::new(),
             fd,
@@ -73,5 +76,15 @@ impl Server {
             }
         }
         unreachable!()
+    }
+
+    pub fn flush_db(&mut self, idx: usize) {
+        self.db[idx] = DB::new(idx);
+    }
+
+    pub fn flush_all(&mut self) {
+        for i in 0..self.db.len() {
+            self.db[i] = DB::new(i);
+        }
     }
 }

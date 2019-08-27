@@ -1302,6 +1302,143 @@ pub fn dbsize_command(
     client.add_reply(gen_usize_reply(db.dict.len()));
 }
 
+pub fn auth_command(
+    client: &mut Client,
+    server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    if server.require_pass.is_none() ||
+        client.argv[1].borrow().string() == &server.require_pass.as_ref().unwrap()[..] {
+        client.authenticate = true;
+        client.add_reply(shared_object!(OK));
+    } else {
+        client.authenticate = false;
+        client.add_str_reply("-ERR\r\n");
+    }
+}
+
+pub fn save_command(
+    client: &mut Client,
+    _server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    // TODO
+    client.add_str_reply("-ERR not yet implemented\r\n");
+}
+
+pub fn bgsave_command(
+    client: &mut Client,
+    _server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    // TODO
+    client.add_str_reply("-ERR not yet implemented\r\n");
+}
+
+pub fn shutdown_command(
+    client: &mut Client,
+    _server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    // TODO
+    client.add_str_reply("-ERR not yet implemented\r\n");
+}
+
+pub fn lastsave_command(
+    client: &mut Client,
+    _server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    // TODO
+    client.add_str_reply("-ERR not yet implemented\r\n");
+}
+
+pub fn type_command(
+    client: &mut Client,
+    server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    let db = &mut server.db[client.db_idx];
+
+    match db.look_up_key_read(&client.argv[1]) {
+        None => client.add_reply(shared_object!(NULL_BULK)),
+        Some(o) => {
+            let t = match o.borrow().object_type() {
+                RobjType::String => "string",
+                RobjType::List => "list",
+                RobjType::Set => "set",
+                RobjType::Hash => "hash",
+                RobjType::Zset => "zset",
+            };
+            let rep = Robj::create_string_object(t);
+            add_single_reply(client, rep);
+        }
+    }
+}
+
+pub fn sync_command(
+    client: &mut Client,
+    _server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    // TODO
+    client.add_str_reply("-ERR not yet implemented\r\n");
+}
+
+pub fn flushdb_command(
+    client: &mut Client,
+    server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    server.flush_db(client.db_idx);
+    client.add_reply(shared_object!(OK));
+}
+
+pub fn flushall_command(
+    client: &mut Client,
+    server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    server.flush_all();
+    client.add_reply(shared_object!(OK));
+}
+
+pub fn sort_command(
+    client: &mut Client,
+    _server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    // TODO
+    client.add_str_reply("-ERR not yet implemented\r\n");
+}
+
+pub fn info_command(
+    client: &mut Client,
+    _server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    // TODO
+    client.add_str_reply("-ERR not yet implemented\r\n");
+}
+
+pub fn monitor_command(
+    client: &mut Client,
+    _server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    // TODO
+    client.add_str_reply("-ERR not yet implemented\r\n");
+}
+
+pub fn slaveof_command(
+    client: &mut Client,
+    _server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    // TODO
+    client.add_str_reply("-ERR not yet implemented\r\n");
+}
+
 pub fn ping_command(
     client: &mut Client,
     _server: &mut Server,
@@ -1470,11 +1607,22 @@ const CMD_TABLE: &[Command] = &[
     Command { name: "expire", proc: expire_command, arity: 3, flags: CMD_INLINE },
     Command { name: "keys", proc: keys_command, arity: 2, flags: CMD_INLINE },
     Command { name: "dbsize", proc: dbsize_command, arity: 1, flags: CMD_INLINE },
-    // TODO
+    Command { name: "auth", proc: auth_command, arity: 2, flags: CMD_INLINE },
     Command { name: "ping", proc: ping_command, arity: 1, flags: CMD_INLINE },
     Command { name: "echo", proc: echo_command, arity: 2, flags: CMD_INLINE },
-    // TODO
+    Command { name: "save", proc: save_command, arity: 1, flags: CMD_INLINE },
+    Command { name: "bgsave", proc: bgsave_command, arity: 1, flags: CMD_INLINE },
+    Command { name: "shutdown", proc: shutdown_command, arity: 1, flags: CMD_INLINE },
+    Command { name: "lastsave", proc: lastsave_command, arity: 1, flags: CMD_INLINE },
+    Command { name: "type", proc: type_command, arity: 2, flags: CMD_INLINE },
+    Command { name: "sync", proc: sync_command, arity: 1, flags: CMD_INLINE },
+    Command { name: "flushdb", proc: flushdb_command, arity: 1, flags: CMD_INLINE },
+    Command { name: "flushall", proc: flushall_command, arity: 1, flags: CMD_INLINE },
+    Command { name: "sort", proc: sort_command, arity: -2, flags: CMD_INLINE },
+    Command { name: "info", proc: info_command, arity: 1, flags: CMD_INLINE },
+    Command { name: "monitor", proc: monitor_command, arity: 1, flags: CMD_INLINE },
     Command { name: "ttl", proc: ttl_command, arity: 2, flags: CMD_INLINE },
+    Command { name: "slaveof", proc: slaveof_command, arity: 3, flags: CMD_INLINE },
     Command { name: "object", proc: object_command, arity: -2, flags: CMD_INLINE },
     Command { name: "command", proc: command_command, arity: 1, flags: CMD_INLINE },
 ];

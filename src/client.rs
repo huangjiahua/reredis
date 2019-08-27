@@ -34,6 +34,7 @@ pub struct Client {
     pub bulk_len: Option<usize>,
     pub argv: Vec<RobjPtr>,
 
+    pub authenticate: bool,
     pub reply_state: ReplyState,
     pub reply: Vec<RobjPtr>,
 
@@ -50,6 +51,7 @@ impl Client {
             last_interaction: SystemTime::now(),
             bulk_len: None,
             argv: vec![],
+            authenticate: true,
             reply_state: ReplyState::None,
             reply: vec![],
             db_idx: 0,
