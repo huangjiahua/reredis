@@ -6,8 +6,9 @@ use std::cell::RefCell;
 use crate::object::{RobjPtr, Robj};
 use crate::protocol;
 use crate::server::Server;
-use crate::command::{lookup_command, CMD_BULK};
+use crate::command::{lookup_command, CMD_DENY_OOM};
 use crate::util::*;
+use crate::zalloc;
 
 const CLIENT_CLOSE: i32 = 0b0001;
 const CLIENT_SLAVE: i32 = 0b0010;
@@ -51,7 +52,7 @@ impl Client {
             last_interaction: SystemTime::now(),
             bulk_len: None,
             argv: vec![],
-            authenticate: true,
+            authenticate: false,
             reply_state: ReplyState::None,
             reply: vec![],
             db_idx: 0,
@@ -93,7 +94,10 @@ impl Client {
         el: &mut AeEventLoop,
     ) -> Result<(), CommandError> {
         assert!(!self.argv.is_empty());
-        // TODO: free memory if needed
+
+        if server.max_memory > 0 {
+            server.free_memory_if_needed()
+        }
 
         if case_eq(self.argv[0].borrow().string(), "quit".as_bytes()) {
             return Err(CommandError::Quit);
@@ -117,15 +121,21 @@ impl Client {
             self.reset();
             return Err(CommandError::WrongNumber);
             // TODO: max memory
-        } else if cmd.flags & CMD_BULK != 0 && self.bulk_len.is_none() {
-            // TODO: figure out what bulk really mean
-            // for now, I use the latest version of redis protocol
-            // it seems that the all commands are bulk
+        } else if server.max_memory > 0 &&
+            cmd.flags & CMD_DENY_OOM != 0 &&
+            zalloc::allocated_memory() > server.max_memory {
+            self.add_str_reply("-ERR command not allowed when used memory > 'maxmemory'\r\n");
+            self.reset();
+            return Err(CommandError::OOM);
         }
 
         // TODO: share objects to save memory
 
-        // TODO: authenticate
+        if server.require_pass.is_some() && !self.authenticate && cmd.name != "auth" {
+            self.add_str_reply("-ERR operation not permitted\r\n");
+            self.reset();
+            return Err(CommandError::NotPermitted);
+        }
 
         // TODO: save server dirty bit and tackle problems with slave server ans monitors
         (&cmd.proc)(self, server, el);
@@ -186,6 +196,8 @@ pub enum CommandError {
     Close,
     Unknown,
     WrongNumber,
+    OOM,
+    NotPermitted,
 }
 
 impl CommandError {
@@ -196,6 +208,8 @@ impl CommandError {
             Self::Close => "Client close",
             Self::Unknown => "Unknown command",
             Self::WrongNumber => "Wrong number of arguments",
+            Self::OOM => "Out of memory",
+            Self::NotPermitted => "Client's action is not permitted",
         }
     }
 }

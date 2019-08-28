@@ -10,6 +10,8 @@ use crate::env::Config;
 use std::net::SocketAddr;
 use std::time::SystemTime;
 use crate::object::linked_list::LinkedList;
+use crate::zalloc;
+use crate::object::RobjPtr;
 
 
 pub struct Server {
@@ -43,6 +45,7 @@ pub struct Server {
     pub require_pass: Option<String>,
     // TODO: replication
     pub max_clients: usize,
+    pub max_memory: usize,
 }
 
 impl Server {
@@ -90,6 +93,7 @@ impl Server {
             require_pass: config.require_pass.clone(),
 
             max_clients: config.max_clients,
+            max_memory: config.max_memory,
         }
     }
 
@@ -135,6 +139,45 @@ impl Server {
                 false
             }
         })
+    }
+
+    pub fn free_memory_if_needed(&mut self) {
+        while self.max_memory > 0 && zalloc::allocated_memory() > self.max_memory {
+            // for now only keys in expires table will be freed
+            let mut freed: usize = 0;
+            for db in self.db.iter_mut() {
+                if db.expires.len() == 0 {
+                    continue;
+                }
+                let mut min_key: Option<RobjPtr> = None;
+                let mut min_t: Option<SystemTime> = None;
+
+                for _ in 0..3 {
+                    let (key, t) = db.expires.random_key_value();
+                    match min_t {
+                        None => {
+                            min_key = Some(Rc::clone(key));
+                            min_t = Some(t.clone());
+                        }
+                        Some(time) => {
+                            if *t < time {
+                                min_key = Some(Rc::clone(key));
+                                min_t = Some(t.clone());
+                            } else {
+                                min_t = Some(time);
+                            }
+                        }
+                    }
+                }
+                if let Some(key) = min_key {
+                    let _ = db.delete_key(&key);
+                    freed += 1;
+                }
+            }
+            if freed == 0 {
+                return;
+            }
+        }
     }
 
     pub fn flush_db(&mut self, idx: usize) {
