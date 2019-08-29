@@ -46,6 +46,8 @@ pub struct Server {
     // TODO: replication
     pub max_clients: usize,
     pub max_memory: usize,
+
+    pub shutdown: bool,
 }
 
 impl Server {
@@ -94,6 +96,8 @@ impl Server {
 
             max_clients: config.max_clients,
             max_memory: config.max_memory,
+
+            shutdown: false,
         }
     }
 

@@ -324,6 +324,9 @@ impl AeEventLoop {
             if let Err(e) = r {
                 debug!("Processing events: {}", e.description());
             }
+            if server.shutdown {
+                break;
+            }
         }
     }
 }

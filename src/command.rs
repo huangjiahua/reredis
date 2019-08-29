@@ -1336,12 +1336,12 @@ pub fn bgsave_command(
 }
 
 pub fn shutdown_command(
-    client: &mut Client,
-    _server: &mut Server,
+    _client: &mut Client,
+    server: &mut Server,
     _el: &mut AeEventLoop,
 ) {
-    // TODO
-    client.add_str_reply("-ERR not yet implemented\r\n");
+    warn!("User requested shutdown");
+    server.shutdown = true;
 }
 
 pub fn lastsave_command(

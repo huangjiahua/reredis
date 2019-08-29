@@ -11,4 +11,6 @@ steps:
   - script: cargo build --all
     displayName: Cargo build
   - script: cargo test --all
-    displayName: Cargo test
+    displayName: Cargo unit test
+  - script: cargo test -- --ignored
+    displayName: Cargo integrated test
