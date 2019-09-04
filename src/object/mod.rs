@@ -176,6 +176,14 @@ impl Robj {
         )
     }
 
+    pub fn from_bytes(bytes: Vec<u8>) -> RobjPtr {
+        Self::create_object(
+            RobjType::String,
+            RobjEncoding::Raw,
+            Box::new(bytes),
+        )
+    }
+
     pub fn create_raw_string_object(string: &str) -> RobjPtr {
         let ret = Self::create_string_object(string);
         ret.borrow_mut().encoding = RobjEncoding::Raw;

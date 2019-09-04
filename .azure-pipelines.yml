@@ -13,4 +13,4 @@ steps:
   - script: cargo test --all
     displayName: Cargo unit test
   - script: cargo test --test server_test -- --ignored --nocapture
-    displayName: Cargo integrated test
+    displayName: Cargo integration test

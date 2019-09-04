@@ -393,7 +393,8 @@ pub fn read_query_from_client(
     el: &mut AeEventLoop,
     fd: &Fd,
     data: &ClientData,
-    _mask: i32) {
+    _mask: i32
+) {
     let client_ptr = Rc::clone(data.unwrap_client());
     let mut fd_ref = fd.as_ref().borrow_mut();
     let stream = fd_ref.unwrap_stream_mut();
@@ -580,5 +581,6 @@ pub fn server_cron(
         }
     }
     // TODO: check if we should connect to master
+
     1000
 }

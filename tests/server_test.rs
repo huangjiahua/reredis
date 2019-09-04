@@ -112,7 +112,12 @@ fn test_main() {
 const TEST_CASES: &'static [TestCase] = &[
     TestCase { name: "ping server", func: test_ping },
     TestCase { name: "simple set and get", func: test_simple_set_and_get },
+    TestCase { name: "simple del", func: test_simple_del },
+    TestCase { name: "simple incr and decr", func: test_simple_incr_decr },
+    TestCase { name: "simple mget", func: test_simple_mget },
 ];
+
+// simple tests
 
 fn test_ping(_input: Box<dyn TestInputData>) -> TestResult {
     error!("ready to ping");
@@ -122,15 +127,74 @@ fn test_ping(_input: Box<dyn TestInputData>) -> TestResult {
 }
 
 fn test_simple_set_and_get(_input: Box<dyn TestInputData>) -> TestResult {
-    error!("ready to set");
+    error!("ready to set and get");
     let mut con = establish()?;
     let ret: String = con.set("_key", "_value")?;
     compare("OK".to_string(), ret)?;
 
-    let ret: String = redis::cmd("GET").arg("_key").query(&mut con)?;
+    let ret: String = con.get("_key")?;
     compare("_value".to_string(), ret)?;
+
+    let ret: i64 = con.set_nx("_key", "_value")?;
+    compare_i64(0, ret)?;
+
+    let ret: Option<String> = con.get("_not_exist")?;
+    is_nil(ret)?;
+
+
     Ok(())
 }
+
+fn test_simple_del(_input: Box<dyn TestInputData>) -> TestResult {
+    error!("ready to set and del");
+    let mut con = establish()?;
+    let ret: String = con.set("_to_be_deleted", "0")?;
+    compare("OK".to_string(), ret)?;
+
+    let ret: i64 = con.del("_to_be_deleted")?;
+    compare_i64(1, ret)?;
+
+    let ret: i64 = con.del("_to_not_be_deleted")?;
+    compare_i64(0, ret)?;
+
+    Ok(())
+}
+
+fn test_simple_incr_decr(_input: Box<dyn TestInputData>) -> TestResult {
+    error!("ready to incr and decr");
+    let mut con = establish()?;
+    let ret: i64 = con.incr("_counter1", 1)?;
+    compare_i64(1, ret)?;
+
+    let ret: i64 = con.incr("_counter2", -1)?;
+    compare_i64(-1, ret)?;
+
+    let ret: i64 = con.incr("_counter1", 100)?;
+    compare_i64(101, ret)?;
+
+    let ret: i64 = con.incr("_counter1", -1000)?;
+    compare_i64(-899, ret)?;
+
+    Ok(())
+}
+
+fn test_simple_mget(_input: Box<dyn TestInputData>) -> TestResult {
+    error!("ready to mget");
+    let mut con = establish()?;
+    con.set_read_timeout(Some(Duration::from_secs(10)));
+    for j in 0..3 {
+        let _: () = con.set(&format!("key{}", j), &j.to_string())?;
+    }
+
+    let ret: Vec<Option<String>> = con.get(&["key0", "key1", "key2"])?;
+    for j in 0..3 {
+        // TODO: change this
+        let s = ret[j].as_ref().unwrap();
+        let _ = compare(j.to_string(), s.clone())?;
+    }
+    Ok(())
+}
+
 
 fn shutdown() {
     let mut con = establish().unwrap();
@@ -144,6 +208,12 @@ fn establish() -> Result<redis::Connection, Box<dyn Error>> {
     Ok(con)
 }
 
+fn establish_other(addr: &str) -> Result<redis::Connection, Box<dyn Error>> {
+    let client = redis::Client::open(addr)?;
+    let con = client.get_connection()?;
+    Ok(con)
+}
+
 fn compare(expected: String, real: String) -> TestResult {
     if expected == real {
         Ok(())
@@ -151,6 +221,28 @@ fn compare(expected: String, real: String) -> TestResult {
         Err(Box::new(ReturnError {
             expected,
             real,
+        }))
+    }
+}
+
+fn compare_i64(expected: i64, real: i64) -> TestResult {
+    if expected == real {
+        Ok(())
+    } else {
+        Err(Box::new(ReturnError {
+            expected: expected.to_string(),
+            real: real.to_string(),
+        }))
+    }
+}
+
+fn is_nil(real: Option<String>) -> TestResult {
+    if real.is_none() {
+        Ok(())
+    } else {
+        Err(Box::new(ReturnError {
+            expected: "nil".to_string(),
+            real: real.unwrap(),
         }))
     }
 }

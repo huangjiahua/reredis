@@ -9,7 +9,7 @@ pub fn level_to_character(level: log::Level) -> &'static str {
 
 pub fn test_init_logger() {
     let mut builder = env_logger::Builder::new();
-    builder.filter_level(log::LevelFilter::Info);
+    builder.filter_level(log::LevelFilter::Debug);
     builder.format(
         |buf, record|
             writeln!(

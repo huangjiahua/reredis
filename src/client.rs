@@ -120,7 +120,6 @@ impl Client {
             self.add_str_reply("-Error wrong number of arguments\r\n");
             self.reset();
             return Err(CommandError::WrongNumber);
-            // TODO: max memory
         } else if server.max_memory > 0 &&
             cmd.flags & CMD_DENY_OOM != 0 &&
             zalloc::allocated_memory() > server.max_memory {
@@ -166,6 +165,15 @@ impl Client {
         self.add_reply(
             Robj::create_string_object(s),
         );
+    }
+
+    pub fn glue_reply(&mut self) {
+        let mut glued: Vec<u8> = vec![];
+        for obj in self.reply.iter() {
+            glued.extend_from_slice(obj.borrow().string())
+        }
+        self.reply.clear();
+        self.reply.push(Robj::from_bytes(glued));
     }
 }
 

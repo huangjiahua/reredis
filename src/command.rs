@@ -206,6 +206,7 @@ pub fn incr_decr_command(
     let o = Robj::create_int_object(val);
     db.dict.replace(Rc::clone(&client.argv[1]), Rc::clone(&o));
     client.add_reply(shared_object!(COLON));
+    // TODO: change this
     client.add_reply(o.borrow().gen_string());
     client.add_reply(shared_object!(CRLF));
 }
@@ -229,8 +230,9 @@ pub fn mget_command(
             Some(o) => {
                 if !o.borrow().is_string() {
                     client.add_reply(shared_object!(NULL_BULK));
+                } else {
+                    add_single_reply(client, o.borrow().gen_string());
                 }
-                add_single_reply(client, o);
             }
         }
     }
