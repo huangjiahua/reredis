@@ -167,6 +167,12 @@ impl Client {
         );
     }
 
+    pub fn add_reply_from_string(&mut self, s: String) {
+        self.add_reply(
+            Robj::from_bytes(s.into_bytes())
+        )
+    }
+
     pub fn glue_reply(&mut self) {
         let mut glued: Vec<u8> = vec![];
         for obj in self.reply.iter() {

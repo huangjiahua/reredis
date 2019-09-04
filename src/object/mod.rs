@@ -92,6 +92,15 @@ impl Robj {
         self.ptr.bytes_ref()
     }
 
+    pub fn string_len(&self) -> usize {
+        match self.encoding {
+            RobjEncoding::Int => {
+                self.integer().to_string().len()
+            }
+            _ => self.string().len()
+        }
+    }
+
     pub fn integer(&self) -> i64 {
         self.ptr.integer()
     }
@@ -130,7 +139,7 @@ impl Robj {
     }
 
     pub fn string_object_len(&self) -> usize {
-        self.string().len()
+        self.string_len()
     }
 
     pub fn create_object(obj_type: RobjType, encoding: RobjEncoding, ptr: Pointer) -> RobjPtr {
@@ -334,7 +343,7 @@ impl Robj {
     }
 
     fn list_can_update(&self, o: &RobjPtr) -> bool {
-        if (o.borrow().string().len() > (1 << 16)) ||
+        if (o.borrow().string_len() > (1 << 16)) ||
             (self.list_len() == 7) {
             return true;
         }

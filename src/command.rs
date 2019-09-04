@@ -52,7 +52,7 @@ pub fn get_command(
             let rep = match enc {
                 RobjEncoding::Raw => s,
                 RobjEncoding::EmbStr => s,
-                RobjEncoding::Int => s.borrow().gen_string(),
+                RobjEncoding::Int => s,
                 _ => {
                     client.add_reply(shared_object!(WRONG_TYPE));
                     return;
@@ -206,8 +206,7 @@ pub fn incr_decr_command(
     let o = Robj::create_int_object(val);
     db.dict.replace(Rc::clone(&client.argv[1]), Rc::clone(&o));
     client.add_reply(shared_object!(COLON));
-    // TODO: change this
-    client.add_reply(o.borrow().gen_string());
+    client.add_reply(o);
     client.add_reply(shared_object!(CRLF));
 }
 
@@ -218,7 +217,7 @@ pub fn mget_command(
 ) {
     let n = client.argc() - 1;
     let db = &mut server.db[client.db_idx];
-    client.add_str_reply(&format!("*{}\r\n", n));
+    client.add_reply_from_string(format!("*{}\r\n", n));
     let mut argv: Vec<RobjPtr> = vec![];
     swap(&mut argv, &mut client.argv);
     for key in argv
@@ -231,7 +230,7 @@ pub fn mget_command(
                 if !o.borrow().is_string() {
                     client.add_reply(shared_object!(NULL_BULK));
                 } else {
-                    add_single_reply(client, o.borrow().gen_string());
+                    add_single_reply(client, o);
                 }
             }
         }
@@ -293,7 +292,7 @@ pub fn push_generic_command(
     if len == 0 {
         client.add_reply(shared_object!(CZERO));
     } else {
-        client.add_str_reply(&format!(":{}\r\n", len));
+        client.add_reply_from_string(format!(":{}\r\n", len));
     }
 }
 
@@ -706,7 +705,7 @@ pub fn smembers_command(
         }
     };
 
-    client.add_str_reply(&format!("*{}\r\n", set_obj.borrow().set_len()));
+    client.add_reply_from_string(format!("*{}\r\n", set_obj.borrow().set_len()));
 
     for o in set_obj.borrow().set_iter() {
         add_single_reply(client, o);
@@ -857,7 +856,7 @@ pub fn spop_command(
     old_len = set_obj.borrow().set_len();
     deleted = rand::thread_rng().gen_range(0, old_len + 1);
 
-    client.add_str_reply(&format!("*{}\r\n", deleted));
+    client.add_reply_from_string(format!("*{}\r\n", deleted));
     for _ in 0..deleted {
         add_single_reply(
             client,
@@ -1035,7 +1034,7 @@ fn sdiff_general_command(
     }
 
     if !dst {
-        client.add_str_reply(&format!("*{}\r\n", cardinality));
+        client.add_reply_from_string(format!("*{}\r\n", cardinality));
         assert_eq!(cardinality, tmp_set.borrow().set_len());
         for obj in tmp_set.borrow().set_iter() {
             add_single_reply(client, obj);
@@ -1477,16 +1476,16 @@ pub fn ttl_command(
             let now = SystemTime::now();
             if *t < now {
                 let _ = db.delete_key(&client.argv[1]);
-                client.add_str_reply(&format!(":{}\r\n", -2));
+                client.add_reply_from_string(format!(":{}\r\n", -2));
             } else {
                 let second: u64 = t.duration_since(now).unwrap().as_secs();
-                client.add_str_reply(&format!(":{}\r\n", second));
+                client.add_reply_from_string(format!(":{}\r\n", second));
             };
         }
         None => {
             match db.look_up_key_read(&client.argv[1]) {
-                None => client.add_str_reply(&format!(":{}\r\n", -2)),
-                Some(_) => client.add_str_reply(&format!(":{}\r\n", -1)),
+                None => client.add_reply_from_string(format!(":{}\r\n", -2)),
+                Some(_) => client.add_reply_from_string(format!(":{}\r\n", -1)),
             }
         }
     }
@@ -1539,7 +1538,7 @@ pub fn object_encoding_command(
         RobjEncoding::EmbStr => "embstr",
     };
 
-    client.add_str_reply(&format!("${}\r\n", s.len()));
+    client.add_reply_from_string(format!("${}\r\n", s.len()));
     client.add_str_reply(s);
     client.add_reply(shared_object!(CRLF));
 }
@@ -1553,7 +1552,7 @@ fn gen_usize_reply(i: usize) -> RobjPtr {
 }
 
 fn add_single_reply(c: &mut Client, o: RobjPtr) {
-    c.add_str_reply(&format!("${}\r\n", o.borrow().string().len()));
+    c.add_reply_from_string(format!("${}\r\n", o.borrow().string_len()));
     c.add_reply(o);
     c.add_reply(shared_object!(CRLF));
 }

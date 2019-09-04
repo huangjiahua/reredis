@@ -16,6 +16,7 @@ use crate::util::*;
 use std::env::set_current_dir;
 use std::fmt;
 use crate::zalloc;
+use crate::object::RobjEncoding;
 
 pub const REREDIS_VERSION: &str = "0.0.1";
 pub const REREDIS_REQUEST_MAX_SIZE: usize = 1024 * 1024 * 256;
@@ -495,8 +496,15 @@ pub fn send_reply_to_client(
 
     for rep in client.reply
         .iter()
-        .map(|x| x.as_ref()) {
-        match stream.write(rep.borrow().string()) {
+        .map(|x| x.borrow()) {
+        let write_result = match rep.encoding() {
+            RobjEncoding::Int => {
+                let s = rep.integer().to_string();
+                stream.write(s.as_bytes())
+            }
+            _ => stream.write(rep.string())
+        };
+        match write_result {
             Err(e) => if e.kind() != ErrorKind::Interrupted {
                 debug!("Error writing to client: {}", e.description());
                 free_client_occupied_in_el(server, el, data.unwrap_client(), stream);
