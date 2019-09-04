@@ -10,6 +10,7 @@ use crate::object::list::ListWhere;
 use crate::glob::*;
 use rand::Rng;
 use std::time::{SystemTime, Duration};
+use crate::sort::{SortOptions, SortOrder, SortType};
 
 
 type CommandProc = fn(
@@ -1406,11 +1407,45 @@ pub fn flushall_command(
 
 pub fn sort_command(
     client: &mut Client,
-    _server: &mut Server,
+    server: &mut Server,
     _el: &mut AeEventLoop,
 ) {
-    // TODO
-    client.add_str_reply("-ERR not yet implemented\r\n");
+    let db = &mut server.db[client.db_idx];
+
+    let target = match db.look_up_key_read(&client.argv[1]) {
+        None => {
+            client.add_reply(shared_object!(EMPTY_MULTI_BULK));
+            return;
+        }
+        Some(o) => {
+            let t = o.borrow().object_type();
+            match t {
+                RobjType::Set => o,
+                RobjType::List => o,
+                _ => {
+                    client.add_reply(shared_object!(WRONG_TYPE));
+                    return;
+                }
+            }
+        }
+    };
+
+    let target_ref = target.borrow();
+    let mut sort_vec: Vec<(RobjPtr, RobjPtr)> = target_ref
+        .linear_iter()
+        .map(|o| (o.clone(), o.clone()))
+        .collect();
+    let sort_options = SortOptions {
+        sort_order: SortOrder::Asc,
+        sort_type: SortType::Numeric,
+    };
+    let _ = sort_options.sort(&mut sort_vec);
+
+    client.add_reply_from_string(format!("*{}\r\n", sort_vec.len()));
+    for o in
+        sort_vec.iter().map(|t| t.1.clone()) {
+        add_single_reply(client, o);
+    }
 }
 
 pub fn info_command(

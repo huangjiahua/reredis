@@ -22,7 +22,7 @@ use crate::hash;
 use rand::prelude::*;
 use crate::object::zip_list::ZipListValue;
 use crate::object::list::ListWhere;
-use crate::util::{bytes_vec, bytes_to_i64};
+use crate::util::{bytes_vec, bytes_to_i64, bytes_to_f64};
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum RobjType {
@@ -103,6 +103,25 @@ impl Robj {
 
     pub fn integer(&self) -> i64 {
         self.ptr.integer()
+    }
+
+    pub fn float(&self) -> f64 {
+        self.parse_to_float().unwrap()
+    }
+
+    pub fn parse_to_float(&self) -> Result<f64, ()> {
+        if self.obj_type != RobjType::String {
+            panic!("This type cannot be converted to float")
+        }
+        match self.encoding {
+            RobjEncoding::Int => Ok(self.integer() as f64),
+            _ => {
+                match bytes_to_f64(self.string()) {
+                    Ok(n) => Ok(n),
+                    Err(_) => Err(()),
+                }
+            },
+        }
     }
 
     pub fn change_to_str(&mut self, s: &str) {
@@ -311,6 +330,14 @@ impl Robj {
 
     pub fn object_type(&self) -> RobjType {
         self.obj_type
+    }
+
+    pub fn linear_iter<'a>(&'a self) -> Box<dyn Iterator<Item=RobjPtr> + 'a> {
+        match self.obj_type {
+            RobjType::Set => self.set_iter(),
+            RobjType::List => self.list_iter(),
+            _ => unreachable!()
+        }
     }
 
     pub fn list_push(&mut self, o: RobjPtr, w: ListWhere) {

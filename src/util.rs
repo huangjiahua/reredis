@@ -26,6 +26,12 @@ pub fn bytes_to_i64(b: &[u8]) -> Result<i64, Box<dyn Error>> {
     Ok(i)
 }
 
+pub fn bytes_to_f64(b: &[u8]) -> Result<f64, Box<dyn Error>> {
+    let s = std::str::from_utf8(b)?;
+    let n = s.parse::<f64>()?;
+    Ok(n)
+}
+
 pub fn bytes_to_usize(b: &[u8]) -> Result<usize, Box<dyn Error>> {
     let s = std::str::from_utf8(b)?;
     let i = s.parse::<usize>()?;

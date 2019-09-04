@@ -115,6 +115,7 @@ const TEST_CASES: &'static [TestCase] = &[
     TestCase { name: "simple del", func: test_simple_del },
     TestCase { name: "simple incr and decr", func: test_simple_incr_decr },
     TestCase { name: "simple mget", func: test_simple_mget },
+    TestCase { name: "simple list push and pop", func: test_simple_list_push_pop },
 ];
 
 // simple tests
@@ -181,7 +182,6 @@ fn test_simple_incr_decr(_input: Box<dyn TestInputData>) -> TestResult {
 fn test_simple_mget(_input: Box<dyn TestInputData>) -> TestResult {
     error!("ready to mget");
     let mut con = establish()?;
-    con.set_read_timeout(Some(Duration::from_secs(10)));
     for j in 0..3 {
         let _: () = con.set(&format!("key{}", j), &j.to_string())?;
     }
@@ -192,6 +192,54 @@ fn test_simple_mget(_input: Box<dyn TestInputData>) -> TestResult {
         let s = ret[j].as_ref().unwrap();
         let _ = compare(j.to_string(), s.clone())?;
     }
+    Ok(())
+}
+
+fn test_simple_list_push_pop(_input: Box<dyn TestInputData>) -> TestResult {
+    error!("ready to list push");
+    let mut con = establish()?;
+
+    // test lpush
+    let ret: i64 = con.lpush("_list_simple_lpush", &["1", "2", "3", "4", "5"])?;
+    let _ = compare_i64(5, ret)?;
+
+    let ret: Vec<String> = con.lrange("_list_simple_lpush", 0, -1)?;
+    let _ = compare_vec(vec!["5", "4", "3", "2", "1"], ret)?;
+
+    // test rpush
+    let ret: i64 = con.rpush("_list_simple_rpush", &["1", "2", "3", "4", "5"])?;
+    let _ = compare_i64(5, ret)?;
+
+    let ret: Vec<String> = con.lrange("_list_simple_rpush", 0, -1)?;
+    let _ = compare_vec(vec!["1", "2", "3", "4", "5"], ret)?;
+
+    // test lpop
+    let ret: String = con.lpop("_list_simple_rpush")?;
+    let _ = compare("1", ret)?;
+    let ret: String = con.lpop("_list_simple_rpush")?;
+    let _ = compare("2", ret)?;
+
+    // test rpop
+    let ret: String = con.rpop("_list_simple_rpush")?;
+    let _ = compare("5", ret)?;
+    let ret: String = con.rpop("_list_simple_rpush")?;
+    let _ = compare("4", ret)?;
+
+    let ret: i64 = con.llen("_list_simple_rpush")?;
+    let _ = compare_i64(1, ret)?;
+
+    // test pop empty
+    let ret: Option<String> = con.rpop("_no_such_list")?;
+    let _ = is_nil(ret)?;
+    let ret: Option<String> = con.lpop("_no_such_list")?;
+    let _ = is_nil(ret)?;
+
+    // test lindex
+    let ret: String = con.lindex("_list_simple_lpush", 0)?;
+    let _ = compare("5", ret)?;
+
+    let ret: Option<String> = con.lindex("_list_simple_lpush", 100)?;
+    let _ = is_nil(ret)?;
     Ok(())
 }
 
@@ -214,12 +262,13 @@ fn establish_other(addr: &str) -> Result<redis::Connection, Box<dyn Error>> {
     Ok(con)
 }
 
-fn compare(expected: String, real: String) -> TestResult {
+fn compare<S>(expected: S, real: String) -> TestResult
+    where S: PartialEq<String> + std::string::ToString {
     if expected == real {
         Ok(())
     } else {
         Err(Box::new(ReturnError {
-            expected,
+            expected: expected.to_string(),
             real,
         }))
     }
@@ -236,13 +285,27 @@ fn compare_i64(expected: i64, real: i64) -> TestResult {
     }
 }
 
-fn is_nil(real: Option<String>) -> TestResult {
-    if real.is_none() {
+fn compare_vec<S>(expected: Vec<S>, real: Vec<String>) -> TestResult
+    where S: PartialEq<String> + std::fmt::Debug {
+    if expected == real {
         Ok(())
     } else {
         Err(Box::new(ReturnError {
-            expected: "nil".to_string(),
-            real: real.unwrap(),
+            expected: format!("{:?}", expected),
+            real: format!("{:?}", real),
+        }))
+    }
+}
+
+fn is_nil<T>(real: Option<T>) -> TestResult
+    where T: std::fmt::Debug {
+    if real.is_none() {
+        Ok(())
+    } else {
+        let none: Option<T> = None;
+        Err(Box::new(ReturnError {
+            expected: format!("{:?}", none),
+            real: format!("{:?}", real),
         }))
     }
 }
