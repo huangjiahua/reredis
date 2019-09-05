@@ -1,5 +1,96 @@
 use crate::object::RobjPtr;
 use std::cmp::Ordering;
+use std::ops::Range;
+use crate::util::bytes_to_i64;
+
+pub fn parse_sort_command(cmd: &[RobjPtr]) -> Result<SortInfo, SortSyntaxError> {
+    let mut info = SortInfo {
+        options: SortOptions {
+            sort_type: SortType::Numeric,
+            sort_order: SortOrder::Asc,
+        },
+        limit: None,
+        get: None,
+        by: None,
+        dst: None,
+    };
+
+    let mut idx: usize = 0;
+    while idx < cmd.len() {
+        let s = cmd[idx].borrow().string().to_ascii_lowercase();
+        match &s[..] {
+            b"asc" => info.options.sort_order = SortOrder::Asc,
+            b"desc" => info.options.sort_order = SortOrder::Desc,
+            b"alpha" => info.options.sort_type = SortType::Alphabetic,
+            b"by" => {
+                if idx + 1 >= cmd.len() {
+                    return Err(SortSyntaxError::NotEnoughArguments);
+                }
+                info.by = Some(cmd[idx + 1].borrow().string().to_vec());
+                idx += 1;
+            }
+            b"get" => {
+                if idx + 1 >= cmd.len() {
+                    return Err(SortSyntaxError::NotEnoughArguments);
+                }
+                if info.get.is_none() {
+                    info.get = Some(Vec::with_capacity(1))
+                }
+                info.get
+                    .as_mut()
+                    .unwrap()
+                    .push(cmd[idx + 1].borrow().string().to_vec());
+                idx += 1;
+            }
+            b"store" => {
+                if idx + 1 >= cmd.len() {
+                    return Err(SortSyntaxError::NotEnoughArguments);
+                }
+                info.dst = Some(cmd[idx + 1].borrow().string().to_vec());
+                idx += 1;
+            }
+            b"limit" => {
+                if idx + 2 >= cmd.len() {
+                    return Err(SortSyntaxError::NotEnoughArguments);
+                }
+                let left = match bytes_to_i64(cmd[idx + 1].borrow().string()) {
+                    Ok(i) => std::cmp::max(0, i) as usize,
+                    Err(_) => return Err(SortSyntaxError::LimitInvalid),
+                };
+                let right = match bytes_to_i64(cmd[idx + 2].borrow().string()) {
+                    Ok(i) => {
+                        if i < 0 {
+                            std::usize::MAX
+                        } else {
+                            i as usize
+                        }
+                    },
+                    Err(_) => return Err(SortSyntaxError::LimitInvalid),
+                };
+                info.limit = Some(left..right);
+                idx += 2;
+            }
+            _ => return Err(SortSyntaxError::Unknown),
+        }
+        idx += 1;
+    }
+
+    Ok(info)
+}
+
+pub struct SortInfo {
+    pub options: SortOptions,
+    pub limit: Option<Range<usize>>,
+    pub get: Option<Vec<Vec<u8>>>,
+    pub by: Option<Vec<u8>>,
+    pub dst: Option<Vec<u8>>,
+}
+
+pub enum SortSyntaxError {
+    LimitInvalid,
+    Unknown,
+    NotEnoughArguments,
+}
 
 #[derive(Copy, Clone, PartialEq)]
 pub enum SortType {
@@ -53,11 +144,11 @@ impl SortOptions {
     }
 
     fn alphabetic_lt<T>(l: &(RobjPtr, T), r: &(RobjPtr, T)) -> Ordering {
-        l.0.borrow().string().cmp(r.0.borrow().string())
+        l.0.borrow().string_cmp(&(r.0))
     }
 
     fn alphabetic_gt<T>(l: &(RobjPtr, T), r: &(RobjPtr, T)) -> Ordering {
-        l.0.borrow().string().cmp(r.0.borrow().string()).reverse()
+        l.0.borrow().string_cmp(&(r.0)).reverse()
     }
 
     fn get_cmp_func<T>(&self) -> CmpFn<T> {

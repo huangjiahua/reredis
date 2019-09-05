@@ -10,7 +10,7 @@ use crate::object::list::ListWhere;
 use crate::glob::*;
 use rand::Rng;
 use std::time::{SystemTime, Duration};
-use crate::sort::{SortOptions, SortOrder, SortType};
+use crate::sort::*;
 
 
 type CommandProc = fn(
@@ -1431,20 +1431,87 @@ pub fn sort_command(
     };
 
     let target_ref = target.borrow();
-    let mut sort_vec: Vec<(RobjPtr, RobjPtr)> = target_ref
-        .linear_iter()
-        .map(|o| (o.clone(), o.clone()))
-        .collect();
-    let sort_options = SortOptions {
-        sort_order: SortOrder::Asc,
-        sort_type: SortType::Numeric,
+    let mut sort_info = match parse_sort_command(&client.argv[2..]) {
+        Ok(info) => info,
+        Err(e) => {
+            if let SortSyntaxError::LimitInvalid = e {
+                client.add_str_reply("-ERR value is not an integer or out of range\r\n");
+            } else {
+                client.add_str_reply("-ERR syntax error\r\n");
+            }
+            return;
+        }
     };
-    let _ = sort_options.sort(&mut sort_vec);
 
-    client.add_reply_from_string(format!("*{}\r\n", sort_vec.len()));
-    for o in
-        sort_vec.iter().map(|t| t.1.clone()) {
-        add_single_reply(client, o);
+    let by = sort_info.by.take();
+    let get = sort_info.get.take();
+    let limit = sort_info.limit.take();
+
+    let mut v: Vec<(RobjPtr, RobjPtr)> =
+        Vec::with_capacity(target_ref.linear_len());
+    for o in target_ref.linear_iter() {
+        if let Some(pat) = by.as_ref() {
+            let key = generate_key_from_pattern(pat, o.borrow().string());
+            let sort_key =
+                match db.look_up_key_read(&Robj::from_bytes(key)) {
+                    Some(k) => k,
+                    None => Robj::create_int_object(0),
+                };
+            v.push((sort_key, o));
+        } else {
+            let sort_key = Rc::clone(&o);
+            v.push((sort_key, o));
+        }
+    }
+
+    let limit = match limit {
+        None => 0..v.len(),
+        Some(l) => {
+            if l.start >= l.end || l.start >= v.len() {
+                client.add_reply(shared_object!(EMPTY_MULTI_BULK));
+                return;
+            }
+            let left = std::cmp::max(l.start, 0);
+            let right = std::cmp::min(l.end, v.len());
+            left..right
+        },
+    };
+
+
+    if let Err(_) = sort_info.options.sort(&mut v) {
+        client.add_str_reply("-ERR One or more scores \
+                can't be converted into double\r\n");
+        return;
+    }
+
+    let out = &v[limit];
+
+    match get {
+        None => {
+            client.add_reply_from_string(format!("*{}\r\n", out.len()));
+            for p in out.iter() {
+                add_single_reply(client, Rc::clone(&p.1));
+            }
+        }
+        Some(get) => {
+            client.add_reply_from_string(format!("*{}\r\n", out.len() * get.len()));
+            for (j, key) in out.iter()
+                .map(|p| &p.1)
+                .enumerate() {
+                for pat in get.iter() {
+                    if pat.len() == 1 && pat[0] == b'#' {
+                        add_single_reply(client, Robj::create_int_object(j as i64));
+                    } else {
+                        let key =
+                            generate_key_from_pattern(&pat[..], key.borrow().string());
+                        match db.look_up_key_read(&Robj::from_bytes(key)) {
+                            Some(o) => add_single_reply(client, o),
+                            None => client.add_reply(shared_object!(NULL_BULK)),
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1453,7 +1520,7 @@ pub fn info_command(
     _server: &mut Server,
     _el: &mut AeEventLoop,
 ) {
-    // TODO
+// TODO
     client.add_str_reply("-ERR not yet implemented\r\n");
 }
 
@@ -1462,7 +1529,7 @@ pub fn monitor_command(
     _server: &mut Server,
     _el: &mut AeEventLoop,
 ) {
-    // TODO
+// TODO
     client.add_str_reply("-ERR not yet implemented\r\n");
 }
 
@@ -1471,7 +1538,7 @@ pub fn slaveof_command(
     _server: &mut Server,
     _el: &mut AeEventLoop,
 ) {
-    // TODO
+// TODO
     client.add_str_reply("-ERR not yet implemented\r\n");
 }
 

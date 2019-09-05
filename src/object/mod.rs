@@ -23,6 +23,7 @@ use rand::prelude::*;
 use crate::object::zip_list::ZipListValue;
 use crate::object::list::ListWhere;
 use crate::util::{bytes_vec, bytes_to_i64, bytes_to_f64};
+use std::cmp::Ordering;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum RobjType {
@@ -101,6 +102,35 @@ impl Robj {
         }
     }
 
+    pub fn string_cmp(&self, other: &RobjPtr) -> Ordering {
+        match self.encoding() {
+            RobjEncoding::Int => {
+                match other.borrow().encoding() {
+                    RobjEncoding::Int => {
+                        self.integer().to_string()
+                            .cmp(&other.borrow().integer().to_string())
+                    }
+                    _ => {
+                        self.integer().to_string().as_bytes()
+                            .cmp(other.borrow().string())
+                    }
+                }
+            }
+            _ => {
+                match other.borrow().encoding() {
+                    RobjEncoding::Int => {
+                        self.string()
+                            .cmp(other.borrow().integer().to_string().as_bytes())
+                    }
+                    _ => {
+                        self.string()
+                            .cmp(other.borrow().string())
+                    }
+                }
+            }
+        }
+    }
+
     pub fn integer(&self) -> i64 {
         self.ptr.integer()
     }
@@ -120,7 +150,7 @@ impl Robj {
                     Ok(n) => Ok(n),
                     Err(_) => Err(()),
                 }
-            },
+            }
         }
     }
 
@@ -336,6 +366,14 @@ impl Robj {
         match self.obj_type {
             RobjType::Set => self.set_iter(),
             RobjType::List => self.list_iter(),
+            _ => unreachable!()
+        }
+    }
+
+    pub fn linear_len(&self) -> usize {
+        match self.obj_type {
+            RobjType::Set => self.set_len(),
+            RobjType::List => self.list_len(),
             _ => unreachable!()
         }
     }

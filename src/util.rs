@@ -108,6 +108,21 @@ pub fn is_prefix_of(p: &str, haystack: &str) -> bool {
     false
 }
 
+pub fn generate_key_from_pattern(pat: &[u8], s: &[u8]) -> Vec<u8> {
+    let k = match pat.iter()
+        .enumerate()
+        .filter(|c| *((*c).1) == b'*')
+        .next() {
+        Some(i) => i.0,
+        None => return pat.to_vec(),
+    };
+    let mut ret: Vec<u8> = Vec::with_capacity(pat.len() + s.len() - 1);
+    ret.extend_from_slice(&pat[0..k]);
+    ret.extend_from_slice(&s[..]);
+    ret.extend_from_slice(&pat[k + 1..]);
+    ret
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

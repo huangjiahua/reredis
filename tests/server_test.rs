@@ -23,6 +23,7 @@ use std::io::Write;
 use common::*;
 use std::error::Error;
 use redis::Commands;
+use rand::Rng;
 
 const ADDR: &str = "redis://127.0.0.1/";
 
@@ -116,6 +117,7 @@ const TEST_CASES: &'static [TestCase] = &[
     TestCase { name: "simple incr and decr", func: test_simple_incr_decr },
     TestCase { name: "simple mget", func: test_simple_mget },
     TestCase { name: "simple list push and pop", func: test_simple_list_push_pop },
+    TestCase { name: "simple sort", func: test_simple_sort },
 ];
 
 // simple tests
@@ -243,6 +245,20 @@ fn test_simple_list_push_pop(_input: Box<dyn TestInputData>) -> TestResult {
     Ok(())
 }
 
+fn test_simple_sort(_input: Box<dyn TestInputData>) -> TestResult {
+    error!("ready to sort");
+    let mut con = establish()?;
+    let mut rng = rand::thread_rng();
+
+    for _ in 0..20 {
+        let k: i64 = rng.gen();
+        let _ = con.lpush("_simple_sort_1", k.to_string())?;
+    }
+
+    let ret: Vec<i64> = redis::cmd("SORT").arg("_simple_sort_1").query(&mut con)?;
+    is_sorted(&ret);
+    Ok(())
+}
 
 fn shutdown() {
     let mut con = establish().unwrap();
@@ -306,6 +322,19 @@ fn is_nil<T>(real: Option<T>) -> TestResult
         Err(Box::new(ReturnError {
             expected: format!("{:?}", none),
             real: format!("{:?}", real),
+        }))
+    }
+}
+
+fn is_sorted<T>(v: &Vec<T>) -> TestResult
+    where T: std::cmp::Ord + Clone {
+    let mut v2 = v.to_vec();
+    v2.sort();
+    match *v == v2 {
+        true => Ok(()),
+        false => Err(Box::new(ReturnError {
+            expected: "sorted vec".to_string(),
+            real: "unsorted vec".to_string(),
         }))
     }
 }
