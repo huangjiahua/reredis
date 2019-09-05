@@ -10,7 +10,7 @@ It is now under developing. **Hoping someone can join me!**
 
 ## Try it?
 
-1. Currently, the host address and port is hard coded as 127.0.0.1:6379. And the function server_cron is not implemented, which means the reredis can just do the simple storage jobs, and it may just crash if you run out of memory. And persistant storage is also not supported yet. Believe me, it will come soon, after I implement most of the commands! The good news is reredis supports Windows, thanks to mio!
+1. Persistant storage is not supported yet. 
 
 2. The supported commands are listed in the bottom of the file `src/command.rs`, you can refer to [Redis Commands](https://redis.io/commands/) to get the information of the commands.
 
