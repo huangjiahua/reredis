@@ -497,12 +497,12 @@ pub fn send_reply_to_client(
     for rep in client.reply
         .iter()
         .map(|x| x.borrow()) {
-        let write_result = match rep.encoding() {
+        let (write_result, n) = match rep.encoding() {
             RobjEncoding::Int => {
                 let s = rep.integer().to_string();
-                stream.write(s.as_bytes())
+                (stream.write_all(s.as_bytes()), s.as_bytes().len())
             }
-            _ => stream.write(rep.string())
+            _ => (stream.write_all(rep.string()), rep.string().len()),
         };
         match write_result {
             Err(e) => if e.kind() != ErrorKind::Interrupted {
@@ -510,7 +510,7 @@ pub fn send_reply_to_client(
                 free_client_occupied_in_el(server, el, data.unwrap_client(), stream);
                 return;
             }
-            Ok(n) => written_bytes += n,
+            Ok(_) => written_bytes += n,
         }
         written_elem += 1;
         if written_bytes >= REREDIS_MAX_WRITE_PER_EVENT {

@@ -19,3 +19,4 @@ pub mod util;
 pub mod glob;
 pub mod zalloc;
 pub mod sort;
+pub mod rdb;

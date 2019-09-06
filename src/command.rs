@@ -3,7 +3,7 @@ use std::rc::Rc;
 use crate::client::Client;
 use crate::server::Server;
 use crate::ae::AeEventLoop;
-use crate::shared::{OK, NULL_BULK, CRLF, CZERO, CONE, COLON, WRONG_TYPE, PONG, EMPTY_MULTI_BULK};
+use crate::shared::{OK, ERR, NULL_BULK, CRLF, CZERO, CONE, COLON, WRONG_TYPE, PONG, EMPTY_MULTI_BULK};
 use crate::util::*;
 use crate::object::{Robj, RobjPtr, RobjEncoding, RobjType};
 use crate::object::list::ListWhere;
@@ -11,6 +11,7 @@ use crate::glob::*;
 use rand::Rng;
 use std::time::{SystemTime, Duration};
 use crate::sort::*;
+use crate::rdb::rdb_save;
 
 
 type CommandProc = fn(
@@ -1321,11 +1322,17 @@ pub fn auth_command(
 
 pub fn save_command(
     client: &mut Client,
-    _server: &mut Server,
+    server: &mut Server,
     _el: &mut AeEventLoop,
 ) {
-    // TODO
-    client.add_str_reply("-ERR not yet implemented\r\n");
+    if server.bg_save_in_progress {
+        client.add_str_reply("-ERR background save in progress\r\n")
+    }
+    if let Ok(_) = rdb_save(server) {
+        client.add_reply(shared_object!(OK));
+    } else {
+        client.add_reply(shared_object!(ERR));
+    }
 }
 
 pub fn bgsave_command(
