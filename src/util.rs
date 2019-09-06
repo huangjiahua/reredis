@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::num::ParseIntError;
+use std::time::SystemTime;
 
 pub fn case_eq(lhs: &[u8], rhs: &[u8]) -> bool {
     if lhs.len() != rhs.len() {
@@ -121,6 +122,10 @@ pub fn generate_key_from_pattern(pat: &[u8], s: &[u8]) -> Vec<u8> {
     ret.extend_from_slice(&s[..]);
     ret.extend_from_slice(&pat[k + 1..]);
     ret
+}
+
+pub fn unix_timestamp(t: &SystemTime) -> u64 {
+    t.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()
 }
 
 #[cfg(test)]
