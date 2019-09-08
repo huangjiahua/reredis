@@ -125,7 +125,7 @@ pub fn generate_key_from_pattern(pat: &[u8], s: &[u8]) -> Vec<u8> {
 }
 
 pub fn unix_timestamp(t: &SystemTime) -> u64 {
-    t.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()
+    t.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64
 }
 
 #[cfg(test)]

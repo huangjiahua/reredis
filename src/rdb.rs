@@ -8,10 +8,10 @@ use std::time::SystemTime;
 use crate::util::unix_timestamp;
 
 const RDB_VERSION: &[u8] = b"REDIS0005";
-const RDB_SELECT_DB: &[u8] = &[0xF, 0xE];
-const RDB_END: &[u8] = &[0xF, 0xF];
+const RDB_SELECT_DB: &[u8] = &[0xFE];
+const RDB_END: &[u8] = &[0xFF];
 const RDB_NO_CHECKSUM: &[u8] = &[0, 0, 0, 0, 0, 0, 0, 0];
-const RDB_EXPIRE_SEC: &[u8] = &[0xF, 0xD];
+const RDB_EXPIRE_SEC: &[u8] = &[0xFC];
 
 const RDB_INT_32: &[u8] = &[0b1100_0010];
 const RDB_INT_16: &[u8] = &[0b1100_0001];
@@ -56,11 +56,11 @@ trait RdbWriter: io::Write {
         if size < 64 {
             self.write_all(&[size as u8])?;
         } else if size < 16384 {
-            let mut bytes: [u8; 2] = (size as u16).to_be_bytes();
+            let mut bytes: [u8; 2] = (size as u16).to_le_bytes();
             bytes[0] |= 0b0100_0000;
             self.write_all(&bytes)?;
         } else if size < std::u32::MAX as usize {
-            let bytes: [u8; 4] = (size as u32).to_be_bytes();
+            let bytes: [u8; 4] = (size as u32).to_le_bytes();
             let encoded: [u8; 5] = [
                 0b1000_0000, bytes[0], bytes[1], bytes[2], bytes[3]
             ];
@@ -68,7 +68,7 @@ trait RdbWriter: io::Write {
         } else {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
-                "cannot be encoding as length",
+                "cannot be encoded as length",
             ));
         }
         Ok(())
@@ -82,7 +82,7 @@ trait RdbWriter: io::Write {
     ) -> io::Result<()> {
         if let Some(t) = exp {
             self.write_all(RDB_EXPIRE_SEC)?;
-            self.write_all(&unix_timestamp(t).to_be_bytes())?;
+            self.dump_timestamp(t)?;
         }
 
         self.write_all(&[value_type_flag(v)])?;
@@ -94,13 +94,19 @@ trait RdbWriter: io::Write {
         Ok(())
     }
 
+    fn dump_timestamp(&mut self, t: &SystemTime) -> io::Result<()> {
+        let unix_t = unix_timestamp(t);
+        self.write_all(&unix_t.to_le_bytes())?;
+        Ok(())
+    }
+
     fn dump_object(&mut self, obj: &RobjPtr) -> io::Result<()> {
         use RobjType::*;
         use RobjEncoding::*;
         match (obj.borrow().object_type(), obj.borrow().encoding()) {
             (String, _) => self.dump_string(obj)?,
             (List, LinkedList) => self.dump_list(obj)?,
-            (Set, Ht) => self.dump_hash(obj)?,
+            (Set, Ht) => self.dump_set(obj)?,
             (Zset, SkipList) => self.dump_zset(obj)?,
             (Hash, Ht) => self.dump_hash(obj)?,
             (Hash, ZipMap) => self.dump_zmap(obj)?,
@@ -134,26 +140,35 @@ trait RdbWriter: io::Write {
             self.dump_bytes(i.to_string().as_bytes())?;
         } else if i < std::i16::MIN as i64 || i > std::i16::MAX as i64 {
             self.write_all(RDB_INT_32)?;
-            let bytes: [u8; 4] = (i as i32).to_be_bytes();
+            let bytes: [u8; 4] = (i as i32).to_le_bytes();
             self.write_all(&bytes)?;
         } else if i < std::i8::MIN as i64 || i > std::i8::MAX as i64 {
             self.write_all(RDB_INT_16)?;
-            let bytes: [u8; 2] = (i as i16).to_be_bytes();
+            let bytes: [u8; 2] = (i as i16).to_le_bytes();
             self.write_all(&bytes)?;
         } else {
             self.write_all(RDB_INT_8)?;
-            let bytes: [u8; 1] = (i as i8).to_be_bytes();
+            let bytes: [u8; 1] = (i as i8).to_le_bytes();
             self.write_all(&bytes)?;
         }
         Ok(())
     }
 
-    fn dump_list(&mut self, _obj: &RobjPtr) -> io::Result<()> {
-        unimplemented!()
+    fn dump_list(&mut self, obj: &RobjPtr) -> io::Result<()> {
+        self.dump_linear(obj)
     }
 
-    fn dump_set(&mut self, _obj: &RobjPtr) -> io::Result<()> {
-        unimplemented!()
+    fn dump_set(&mut self, obj: &RobjPtr) -> io::Result<()> {
+        self.dump_linear(obj)
+    }
+
+    fn dump_linear(&mut self, obj: &RobjPtr) -> io::Result<()> {
+        let obj_ref = obj.borrow();
+        self.dump_length(obj_ref.linear_len())?;
+        for str_obj in obj_ref.linear_iter() {
+            self.dump_string(&str_obj)?;
+        }
+        Ok(())
     }
 
     fn dump_zset(&mut self, _obj: &RobjPtr) -> io::Result<()> {
@@ -168,12 +183,12 @@ trait RdbWriter: io::Write {
         unimplemented!()
     }
 
-    fn dump_ziplist(&mut self, _obj: &RobjPtr) -> io::Result<()> {
-        unimplemented!()
+    fn dump_ziplist(&mut self, obj: &RobjPtr) -> io::Result<()> {
+        self.dump_bytes(obj.borrow().raw_data())
     }
 
-    fn dump_intset(&mut self, _obj: &RobjPtr) -> io::Result<()> {
-        unimplemented!()
+    fn dump_intset(&mut self, obj: &RobjPtr) -> io::Result<()> {
+        self.dump_bytes(obj.borrow().raw_data())
     }
 
     fn dump_zset_ziplist(&mut self, _obj: &RobjPtr) -> io::Result<()> {
@@ -183,7 +198,6 @@ trait RdbWriter: io::Write {
     fn dump_hash_ziplist(&mut self, _obj: &RobjPtr) -> io::Result<()> {
         unimplemented!()
     }
-
 }
 
 impl RdbWriter for BufWriter<File> {}

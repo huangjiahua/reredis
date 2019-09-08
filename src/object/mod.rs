@@ -48,21 +48,22 @@ pub enum RobjEncoding {
 }
 
 pub trait ObjectData {
-    fn bytes_ref(&self) -> &[u8] { panic!("This is not a byte slice"); }
-    fn sds_ref(&self) -> &str { panic!("This is not an Sds string"); }
-    fn integer(&self) -> i64 { panic!("This is not an integer"); }
-    fn linked_list_ref(&self) -> &List { panic!("This is not a List"); }
-    fn linked_list_mut(&mut self) -> &mut List { panic!("This is not a List"); }
-    fn set_ref(&self) -> &Set { panic!("This is not a Set"); }
-    fn set_mut(&mut self) -> &mut Set { panic!("This is not a Set"); }
-    fn zip_list_ref(&self) -> &ZipList { panic!("This is not a ZipList"); }
-    fn zip_list_mut(&mut self) -> &mut ZipList { panic!("This is not a ZipList"); }
-    fn hash_table_ref(&self) -> &Dict<RobjPtr, RobjPtr> { panic!("This is not a hash table"); }
-    fn int_set_ref(&self) -> &IntSet { panic!("This is not an IntSet"); }
-    fn int_set_mut(&mut self) -> &mut IntSet { panic!("This is not an IntSet"); }
+    fn bytes_ref(&self) -> &[u8] { panic!("This is not a byte slice") }
+    fn sds_ref(&self) -> &str { panic!("This is not an Sds string") }
+    fn raw_bytes(&self) -> &[u8] { panic!("This type has no raw bytes") }
+    fn integer(&self) -> i64 { panic!("This is not an integer") }
+    fn linked_list_ref(&self) -> &List { panic!("This is not a List") }
+    fn linked_list_mut(&mut self) -> &mut List { panic!("This is not a List") }
+    fn set_ref(&self) -> &Set { panic!("This is not a Set") }
+    fn set_mut(&mut self) -> &mut Set { panic!("This is not a Set") }
+    fn zip_list_ref(&self) -> &ZipList { panic!("This is not a ZipList") }
+    fn zip_list_mut(&mut self) -> &mut ZipList { panic!("This is not a ZipList") }
+    fn hash_table_ref(&self) -> &Dict<RobjPtr, RobjPtr> { panic!("This is not a hash table") }
+    fn int_set_ref(&self) -> &IntSet { panic!("This is not an IntSet") }
+    fn int_set_mut(&mut self) -> &mut IntSet { panic!("This is not an IntSet") }
     fn set_wrapper_ref(&self) -> &dyn SetWrapper { panic!("This is not as SetWrapper") }
     fn set_wrapper_mut(&mut self) -> &mut dyn SetWrapper { panic!("This is not as SetWrapper") }
-    fn zset_ref(&self) -> &Zset { panic!("This is not a Zset"); }
+    fn zset_ref(&self) -> &Zset { panic!("This is not a Zset") }
 }
 
 type Pointer = Box<dyn ObjectData>;
@@ -100,6 +101,10 @@ impl Robj {
             }
             _ => self.string().len()
         }
+    }
+
+    pub fn raw_data(&self) -> &[u8] {
+        self.ptr.raw_bytes()
     }
 
     pub fn string_cmp(&self, other: &RobjPtr) -> Ordering {
@@ -735,6 +740,9 @@ impl ObjectData for Vec<u8> {
     fn bytes_ref(&self) -> &[u8] {
         self
     }
+    fn raw_bytes(&self) -> &[u8] {
+        self
+    }
 }
 
 impl ObjectData for List {
@@ -747,6 +755,9 @@ impl ObjectData for List {
 }
 
 impl ObjectData for ZipList {
+    fn raw_bytes(&self) -> &[u8] {
+        self.raw_slice()
+    }
     fn zip_list_ref(&self) -> &ZipList {
         self
     }
@@ -773,6 +784,9 @@ impl ObjectData for Set {
 }
 
 impl ObjectData for IntSet {
+    fn raw_bytes(&self) -> &[u8] {
+        self.raw_slice()
+    }
     fn int_set_ref(&self) -> &IntSet {
         self
     }

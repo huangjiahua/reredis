@@ -536,6 +536,10 @@ impl ZipList {
         zl
     }
 
+    pub fn raw_slice(&self) -> &[u8] {
+        &self.0[..]
+    }
+
     pub fn blob_len(&self) -> usize {
         self.0.len()
     }

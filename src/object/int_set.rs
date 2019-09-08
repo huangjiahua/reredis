@@ -28,6 +28,10 @@ impl IntSet {
         }
     }
 
+    pub fn raw_slice(&self) -> &[u8] {
+        &self.0[..]
+    }
+
     pub fn add(&mut self, value: i64) -> Result<(), ()> {
         let val_enc = Self::value_encoding(value);
         if val_enc > self.encoding() {
