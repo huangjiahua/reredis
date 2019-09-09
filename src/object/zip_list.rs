@@ -536,6 +536,10 @@ impl ZipList {
         zl
     }
 
+    pub fn from_bytes(bytes: Vec<u8>) -> ZipList {
+        ZipList(bytes)
+    }
+
     pub fn raw_slice(&self) -> &[u8] {
         &self.0[..]
     }

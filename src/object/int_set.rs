@@ -21,6 +21,10 @@ impl IntSet {
         IntSet(int_set)
     }
 
+    pub fn from_bytes(bytes: Vec<u8>) -> IntSet {
+        IntSet(bytes)
+    }
+
     pub fn iter(&self) -> Iter {
         Iter {
             set: self,

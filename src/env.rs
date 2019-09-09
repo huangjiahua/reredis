@@ -17,6 +17,7 @@ use std::env::set_current_dir;
 use std::fmt;
 use crate::zalloc;
 use crate::object::RobjEncoding;
+use crate::rdb;
 
 pub const REREDIS_VERSION: &str = "0.0.1";
 pub const REREDIS_REQUEST_MAX_SIZE: usize = 1024 * 1024 * 256;
@@ -284,8 +285,14 @@ impl Env {
         );
     }
 
-    pub fn rdb_load(&mut self) -> Result<(), Box<dyn Error>> {
-//        unimplemented!()
+    pub fn rdb_load(&mut self) -> Result<(), ()> {
+        if let Err(e) = rdb::rdb_load(&mut self.server) {
+            if let ErrorKind::NotFound = e.kind() {
+                return Err(());
+            }
+            warn!("{}", e.description());
+            exit(1);
+        }
         Ok(())
     }
 

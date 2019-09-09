@@ -247,6 +247,38 @@ impl Robj {
         )
     }
 
+    pub fn from_linked_list(list: List) -> RobjPtr {
+        Self::create_object(
+            RobjType::List,
+            RobjEncoding::LinkedList,
+            Box::new(list),
+        )
+    }
+
+    pub fn from_set(set: Set) -> RobjPtr {
+        Self::create_object(
+            RobjType::Set,
+            RobjEncoding::Ht,
+            Box::new(set),
+        )
+    }
+
+    pub fn zip_list_from_bytes(bytes: Vec<u8>) -> RobjPtr {
+        Self::create_object(
+            RobjType::List,
+            RobjEncoding::ZipList,
+            Box::new(ZipList::from_bytes(bytes)),
+        )
+    }
+
+    pub fn int_set_from_bytes(bytes: Vec<u8>) -> RobjPtr {
+        Self::create_object(
+            RobjType::Set,
+            RobjEncoding::IntSet,
+            Box::new(IntSet::from_bytes(bytes)),
+        )
+    }
+
     pub fn create_raw_string_object(string: &str) -> RobjPtr {
         let ret = Self::create_string_object(string);
         ret.borrow_mut().encoding = RobjEncoding::Raw;

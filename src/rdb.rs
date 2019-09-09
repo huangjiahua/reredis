@@ -3,10 +3,14 @@ use std::io;
 use std::io::{Write, BufWriter, BufReader, Read};
 use std::fs::{File, OpenOptions};
 use crate::db::DB;
-use crate::object::{RobjPtr, RobjEncoding, RobjType};
+use crate::object::{RobjPtr, RobjEncoding, RobjType, Robj};
 use std::time::SystemTime;
-use crate::util::unix_timestamp;
+use crate::util::{unix_timestamp, to_system_time};
 use std::rc::Rc;
+use crate::object::linked_list::LinkedList;
+use crate::object::dict::Dict;
+use crate::hash;
+use rand::Rng;
 
 const RDB_DB_SELECT_FLAG: u8 = 0xFE;
 const RDB_DB_END_FLAG: u8 = 0xFF;
@@ -251,7 +255,7 @@ pub fn rdb_load(server: &mut Server) -> io::Result<()> {
     let mut reader = BufReader::new(file);
 
     reader.read_exact(&mut buf[0..9])?;
-    check_magic_number(&buf[0..9])?;
+    check_magic_number(&buf[0..5])?;
     let first_db_selector = reader.load_u8()?;
     check_db_selector(first_db_selector)?;
 
@@ -310,7 +314,11 @@ trait RdbReader: io::Read {
     }
 
     fn load_length(&mut self) -> io::Result<usize> {
-        unimplemented!()
+        let len = self.load_length_or_integer()?;
+        match len {
+            LengthOrInteger::Len(l) => Ok(l),
+            _ => Err(other_io_err("require a length rather a integer string")),
+        }
     }
 
     fn load_u8(&mut self) -> io::Result<u8> {
@@ -348,14 +356,147 @@ trait RdbReader: io::Read {
     }
 
     fn load_time(&mut self) -> io::Result<SystemTime> {
-        unimplemented!()
+        let mut buf: [u8; 8] = [0; 8];
+        self.read_exact(&mut buf)?;
+        let stamp: u64 = u64::from_le_bytes(buf);
+        Ok(to_system_time(stamp))
     }
 
     fn load_string_object(&mut self) -> io::Result<RobjPtr> {
+        let prefix = self.load_length_or_integer()?;
+        match prefix {
+            LengthOrInteger::Int(i) => {
+                Ok(Robj::create_int_object(i))
+            }
+            LengthOrInteger::Len(l) => {
+                let mut buf: Vec<u8> = vec![0; l];
+                self.load_n_bytes(&mut buf)?;
+                Ok(Robj::from_bytes(buf))
+            }
+        }
+    }
+
+    fn load_n_bytes(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        self.read_exact(buf)
+    }
+
+    fn load_length_or_integer(&mut self) -> io::Result<LengthOrInteger> {
+        let flag = self.load_u8()?;
+        match flag >> 6 {
+            0b0000 => {
+                return Ok(LengthOrInteger::Len(flag as usize));
+            }
+            0b0001 => {
+                let another = self.load_u8()?;
+                let buf = [flag & 0b0011_1111, another];
+                let len = u16::from_le_bytes(buf);
+                return Ok(LengthOrInteger::Len(len as usize));
+            }
+            0b0010 => {
+                let mut buf: [u8; 4] = [0; 4];
+                self.read_exact(&mut buf)?;
+                let len = u32::from_le_bytes(buf);
+                return Ok(LengthOrInteger::Len(len as usize));
+            }
+            0b0011 => {}
+            _ => unreachable!()
+        }
+
+        match flag & 0b0000_0011 {
+            0 => {
+                let i = self.load_u8()?;
+                let i = i8::from_le_bytes([i]);
+                return Ok(LengthOrInteger::Int(i as i64));
+            }
+            1 => {
+                let mut buf: [u8; 2] = [0; 2];
+                self.read_exact(&mut buf)?;
+                let i = i16::from_le_bytes(buf);
+                return Ok(LengthOrInteger::Int(i as i64));
+            }
+            2 => {
+                let mut buf: [u8; 4] = [0; 4];
+                self.read_exact(&mut buf)?;
+                let i = i32::from_le_bytes(buf);
+                return Ok(LengthOrInteger::Int(i as i64));
+            }
+            _ => {
+                return Err(other_io_err("Wrong length or integer prefix"));
+            }
+        }
+    }
+
+    fn load_object(&mut self, flag: u8) -> io::Result<RobjPtr> {
+        match flag {
+            RDB_STRING_FLAG => self.load_string_object(),
+            RDB_LIST_FLAG => self.load_list_object(),
+            RDB_SET_FLAG => self.load_set_object(),
+            RDB_ZSET_FLAG => self.load_zset_object(),
+            RDB_HASH_FLAG => self.load_hash_object(),
+            RDB_ZIPMAP_FLAG => self.load_zipmap_object(),
+            RDB_ZIPLIST_FLAG => self.load_zip_list_object(),
+            RDB_INTSET_FLAG => self.load_int_set_object(),
+            RDB_ZSET_ZIPLIST_FLAG => self.load_zset_ziplist_object(),
+            RDB_HASH_ZIPLIST_FLAG => self.load_hash_ziplist_object(),
+            _ => Err(other_io_err("No such value type"))
+        }
+    }
+
+    fn load_list_object(&mut self) -> io::Result<RobjPtr> {
+        let len = self.load_length()?;
+        let mut list: LinkedList<RobjPtr> = LinkedList::new();
+        for _ in 0..len {
+            let obj = self.load_string_object()?;
+            list.push_back(obj);
+        }
+        Ok(Robj::from_linked_list(list))
+    }
+
+    fn load_set_object(&mut self) -> io::Result<RobjPtr> {
+        let len = self.load_length()?;
+
+        let mut rng = rand::thread_rng();
+        let num: u64 = rng.gen();
+        let mut s: Dict<RobjPtr, ()> = Dict::new(hash::string_object_hash, num);
+
+        for _ in 0..len {
+            let obj = self.load_string_object()?;
+            let _ = s.add(obj, ());
+        }
+        Ok(Robj::from_set(s))
+    }
+
+    fn load_zset_object(&mut self) -> io::Result<RobjPtr> {
         unimplemented!()
     }
 
-    fn load_object(&mut self, _flag: u8) -> io::Result<RobjPtr> {
+    fn load_hash_object(&mut self) -> io::Result<RobjPtr> {
+        unimplemented!()
+    }
+
+    fn load_zipmap_object(&mut self) -> io::Result<RobjPtr> {
+        unimplemented!()
+    }
+
+    fn load_zip_list_object(&mut self) -> io::Result<RobjPtr> {
+        let len = self.load_length()?;
+        let mut buf: Vec<u8> = vec![0; len];
+        self.load_n_bytes(&mut buf)?;
+        Ok(Robj::zip_list_from_bytes(buf))
+    }
+
+    fn load_int_set_object(&mut self) -> io::Result<RobjPtr> {
+        let len = self.load_length()?;
+        let mut buf: Vec<u8> = vec![0; len];
+        self.load_n_bytes(&mut buf)?;
+        Ok(Robj::int_set_from_bytes(buf))
+    }
+
+    fn load_zset_ziplist_object(&mut self) -> io::Result<RobjPtr> {
+        unimplemented!()
+    }
+
+    fn load_hash_ziplist_object(&mut self) -> io::Result<RobjPtr> {
         unimplemented!()
     }
 }
@@ -366,4 +507,9 @@ enum LoadStatus {
     Ok,
     EndDB,
     EndAll,
+}
+
+enum LengthOrInteger {
+    Int(i64),
+    Len(usize),
 }
