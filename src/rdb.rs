@@ -11,6 +11,11 @@ use crate::object::linked_list::LinkedList;
 use crate::object::dict::Dict;
 use crate::hash;
 use rand::Rng;
+use std::os::unix::io::AsRawFd;
+use nix::unistd::{fork, ForkResult, Pid};
+use nix::sys::ptrace::kill;
+use std::process::exit;
+use std::error::Error;
 
 const RDB_DB_SELECT_FLAG: u8 = 0xFE;
 const RDB_DB_END_FLAG: u8 = 0xFF;
@@ -40,6 +45,37 @@ const RDB_EXPIRE_MS_BUF: &[u8] = &[RDB_KV_EXPIRE_FLAG];
 const RDB_INT_32_BUF: &[u8] = &[RDB_INT_32_FLAG];
 const RDB_INT_16_BUF: &[u8] = &[RDB_INT_16_FLAG];
 const RDB_INT_8_BUF: &[u8] = &[RDB_INT_8_FLAG];
+
+pub fn rdb_save_in_background(server: &mut Server) -> Result<(), ()> {
+    if server.bg_save_in_progress {
+        return Err(());
+    }
+    match fork() {
+        Ok(ForkResult::Parent { child, .. }) => {
+            info!("Background saving started by pid {}", child);
+            server.bg_save_in_progress = true;
+            server.bg_save_child_pid = child.as_raw();
+            return Ok(());
+        }
+        Ok(ForkResult::Child) => {
+            let fd = server.fd.borrow().unwrap_listener().as_raw_fd();
+            let _ = nix::unistd::close(fd);
+            if let Ok(()) = rdb_save(server) {
+                exit(0);
+            } else {
+                exit(1);
+            }
+        }
+        Err(e) => {
+            warn!("Can't save in background: fork: {}", e.description());
+            return Err(());
+        }
+    }
+}
+
+pub fn rdb_kill_background_saving(server: &Server) {
+    let _ = kill(Pid::from_raw(server.bg_save_child_pid));
+}
 
 pub fn rdb_save(server: &Server) -> io::Result<()> {
     let file: File = OpenOptions::new()

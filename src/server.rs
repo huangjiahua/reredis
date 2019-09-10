@@ -37,7 +37,7 @@ pub struct Server {
     pub max_idle_time: usize,
     pub daemonize: bool,
     pub bg_save_in_progress: bool,
-    pub bg_save_child_pid: i64,
+    pub bg_save_child_pid: i32,
     pub save_params: Vec<(usize, usize)>,
     pub log_file: Option<File>,
     pub bind_addr: String,

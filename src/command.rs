@@ -11,7 +11,8 @@ use crate::glob::*;
 use rand::Rng;
 use std::time::{SystemTime, Duration};
 use crate::sort::*;
-use crate::rdb::rdb_save;
+use crate::rdb::*;
+use std::process::exit;
 
 
 type CommandProc = fn(
@@ -1337,20 +1338,43 @@ pub fn save_command(
 
 pub fn bgsave_command(
     client: &mut Client,
-    _server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
-    // TODO
-    client.add_str_reply("-ERR not yet implemented\r\n");
-}
-
-pub fn shutdown_command(
-    _client: &mut Client,
     server: &mut Server,
     _el: &mut AeEventLoop,
 ) {
-    warn!("User requested shutdown");
-    server.shutdown = true;
+    if server.bg_save_in_progress {
+        client.add_str_reply("-ERR background save already in progress\r\n");
+        return;
+    }
+
+    match rdb_save_in_background(server) {
+        Ok(()) => client.add_reply(shared_object!(OK)),
+        Err(()) => client.add_reply(shared_object!(ERR)),
+    }
+}
+
+pub fn shutdown_command(
+    client: &mut Client,
+    server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    warn!("User requested shutdown, saving DB...");
+
+    if server.bg_save_in_progress {
+        warn!("There is a living child. Killing it!");
+        rdb_kill_background_saving(server);
+    }
+
+    match rdb_save(server) {
+        Ok(_) => {
+            warn!("{} bytes used at exit", crate::zalloc::allocated_memory());
+            warn!("Server exit now, bye bye...");
+            exit(0);
+        }
+        Err(_) => {
+            warn!("Error trying to save the DB, can't exit");
+            client.add_str_reply("-ERR can't quit, problems saving the DB\r\n");
+        }
+    }
 }
 
 pub fn lastsave_command(
