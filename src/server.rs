@@ -10,8 +10,11 @@ use crate::env::Config;
 use std::net::SocketAddr;
 use std::time::SystemTime;
 use crate::object::linked_list::LinkedList;
-use crate::zalloc;
+use crate::{zalloc, rdb};
 use crate::object::RobjPtr;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::error::Error;
 
 
 pub struct Server {
@@ -47,7 +50,7 @@ pub struct Server {
     pub max_clients: usize,
     pub max_memory: usize,
 
-    pub shutdown: bool,
+    pub shutdown_asap: Arc<AtomicBool>,
 }
 
 impl Server {
@@ -66,6 +69,9 @@ impl Server {
             Some(f) => Some(File::open(f).unwrap()),
             None => None,
         };
+
+        let shutdown_asap = Arc::new(AtomicBool::new(false));
+        set_up_signal_handling(&shutdown_asap);
 
         Server {
             port: config.port,
@@ -97,7 +103,7 @@ impl Server {
             max_clients: config.max_clients,
             max_memory: config.max_memory,
 
-            shutdown: false,
+            shutdown_asap,
         }
     }
 
@@ -193,4 +199,42 @@ impl Server {
             self.db[i] = DB::new(i);
         }
     }
+
+    pub fn prepare_shutdown(&mut self) {
+        if self.bg_save_in_progress {
+            warn!("There is a living child. Killing it!");
+            rdb::rdb_kill_background_saving(self);
+        }
+
+        match rdb::rdb_save(self) {
+            Ok(_) => {
+                warn!("{} bytes used at exit", crate::zalloc::allocated_memory());
+                warn!("Server exit now, bye bye...");
+            }
+            Err(e) => {
+                warn!("Error trying to save the DB: {}", e.description());
+            }
+        }
+    }
+}
+
+fn set_up_signal_handling(sig_term_sign: &Arc<AtomicBool>) {
+    signal_hook::flag::register(
+        signal_hook::SIGTERM,
+        Arc::clone(sig_term_sign),
+    ).unwrap();
+    signal_hook::flag::register(
+        signal_hook::SIGINT,
+        Arc::clone(sig_term_sign),
+    ).unwrap();
+    // ignore SIGPIPE and SIGHUP
+    let useless_flag = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(
+        signal_hook::SIGPIPE,
+        Arc::clone(&useless_flag),
+    ).unwrap();
+    signal_hook::flag::register(
+        signal_hook::SIGHUP,
+        useless_flag,
+    ).unwrap();
 }

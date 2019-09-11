@@ -67,7 +67,9 @@ impl Config {
         }
     }
 
-    pub fn reset_server_save_params(&mut self) {}
+    pub fn reset_server_save_params(&mut self) {
+        self.save_params.clear();
+    }
 
     pub fn config_from_args(&mut self, args: &[String]) {
         let mut first: bool = false;
@@ -121,6 +123,7 @@ impl Config {
     }
 
     fn load_config_from_string(&mut self, s: &str) {
+        self.reset_server_save_params();
         for (i, line) in s.lines().enumerate() {
             let line = line.trim();
             let argv: Vec<&str>;
@@ -596,7 +599,16 @@ pub fn server_cron(
             }
         }
     } else {
-        // TODO: bg_save
+        let now = SystemTime::now();
+        for (seconds, changes) in server.save_params.iter() {
+            if server.dirty >= *changes &&
+                now.duration_since(server.last_save)
+                    .unwrap()
+                    .as_secs() as usize > *seconds {
+                let _ = rdb::rdb_save_in_background(server);
+                break;
+            }
+        }
     }
 
     // try to expire a few timeout keys

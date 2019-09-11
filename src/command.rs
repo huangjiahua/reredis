@@ -1379,11 +1379,14 @@ pub fn shutdown_command(
 
 pub fn lastsave_command(
     client: &mut Client,
-    _server: &mut Server,
+    server: &mut Server,
     _el: &mut AeEventLoop,
 ) {
-    // TODO
-    client.add_str_reply("-ERR not yet implemented\r\n");
+    let timestamp = server.last_save
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    client.add_reply(gen_usize_reply(timestamp as usize));
 }
 
 pub fn type_command(

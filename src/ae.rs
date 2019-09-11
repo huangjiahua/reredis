@@ -8,6 +8,7 @@ use crate::server::Server;
 use std::cell::RefCell;
 use crate::client::*;
 use std::collections::VecDeque;
+use std::sync::atomic::Ordering;
 
 type AeTimeProc = fn(server: &mut Server, el: &mut AeEventLoop, id: i64, data: &ClientData) -> i32;
 type AeFileProc = fn(server: &mut Server, el: &mut AeEventLoop, fd: &Fd, data: &ClientData, mask: i32);
@@ -324,7 +325,9 @@ impl AeEventLoop {
             if let Err(e) = r {
                 debug!("Processing events: {}", e.description());
             }
-            if server.shutdown {
+            if server.shutdown_asap.load(Ordering::SeqCst) {
+                warn!("Received SIGTERM or SIGINT, scheduling shutdown...");
+                server.prepare_shutdown();
                 break;
             }
         }
