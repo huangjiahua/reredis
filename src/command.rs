@@ -1,6 +1,6 @@
 use std::mem::swap;
 use std::rc::Rc;
-use crate::client::{Client, CLIENT_SLAVE, CLIENT_MONITOR};
+use crate::client::{Client, CLIENT_SLAVE, CLIENT_MONITOR, ReplyState};
 use crate::server::Server;
 use crate::ae::AeEventLoop;
 use crate::shared::{OK, ERR, NULL_BULK, CRLF, CZERO, CONE, COLON, WRONG_TYPE, PONG, EMPTY_MULTI_BULK};
@@ -1414,11 +1414,50 @@ pub fn type_command(
 
 pub fn sync_command(
     client: &mut Client,
-    _server: &mut Server,
+    server: &mut Server,
     _el: &mut AeEventLoop,
 ) {
-    // TODO
-    client.add_str_reply("-ERR not yet implemented\r\n");
+    if client.flags & CLIENT_SLAVE != 0 {
+        return;
+    }
+
+    if !client.reply.is_empty() {
+        client.add_str_reply("-ERR SYNC is invalid with pending input\r\n");
+        return;
+    }
+
+    info!("Slave ask for synchronization");
+
+    if server.bg_save_in_progress {
+        let ln = server.slaves
+            .iter()
+            .filter(|c|
+                c.borrow().reply_state == ReplyState::WaitBgSaveEnd)
+            .next();
+        if let Some(_) = ln {
+            // Perfect, the server is already registering differences for
+            // another slave. Set the right state, and copy the buffer.
+            client.reply_state = ReplyState::WaitBgSaveEnd;
+            info!("Waiting for end of BGSAVE for SYNC");
+        } else {
+            // No way, we need to wait for the next BGSAVE in order to
+            // register differences
+            client.reply_state = ReplyState::WaitBgSaveStart;
+            info!("Waiting for next BGSAVE for SYNC");
+        }
+    } else {
+        // Ok we don't have a BGSAVE in progress, let's start one
+        info!("Starting BGSAVE for SYNC");
+        if let Err(_) = rdb_save_in_background(server) {
+            info!("Replication failed, can't BGSAVE");
+            client.add_str_reply("-ERR Unable to perform background save\r\n");
+            return;
+        }
+        client.reply_state = ReplyState::WaitBgSaveEnd;
+    }
+    client.flags = CLIENT_SLAVE;
+    client.slave_select_db = 0;
+    server.transfer_client_to_slaves(client, false);
 }
 
 pub fn flushdb_command(
@@ -1508,7 +1547,7 @@ pub fn sort_command(
             let left = std::cmp::max(l.start, 0);
             let right = std::cmp::min(l.end, v.len());
             left..right
-        },
+        }
     };
 
 
@@ -1574,11 +1613,32 @@ pub fn monitor_command(
 
 pub fn slaveof_command(
     client: &mut Client,
-    _server: &mut Server,
+    server: &mut Server,
     _el: &mut AeEventLoop,
 ) {
-// TODO
-    client.add_str_reply("-ERR not yet implemented\r\n");
+    if case_eq(client.argv[1].borrow().string(), b"no") &&
+        case_eq(client.argv[2].borrow().string(), b"one") {
+        if server.master_host.is_some() {
+            server.master_host = None;
+            server.master = None;
+            server.reply_state = ReplyState::None;
+            info!("MASTER MODE enabled (user request");
+        }
+    } else {
+        let host =
+            String::from_utf8(
+                client.argv[1].borrow().string().to_vec()
+            ).unwrap_or("illegal".to_string());
+        let port =
+            parse_port_from_bytes(
+                client.argv[2].borrow().string()
+            ).unwrap_or(0);
+        info!("SLAVE OF {}:{} enabled (user request)", host, port);
+        server.master_host = Some(host);
+        server.master_port = port;
+        server.reply_state = ReplyState::Connect;
+    }
+    client.add_reply(shared_object!(OK));
 }
 
 pub fn ping_command(

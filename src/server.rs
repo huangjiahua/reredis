@@ -2,9 +2,10 @@ use log::LevelFilter;
 use std::fs::File;
 use crate::ae::*;
 use mio::net::TcpListener;
+use mio::net;
 use std::rc::Rc;
 use std::cell::RefCell;
-use crate::client::Client;
+use crate::client::{Client, ReplyState, CLIENT_MASTER};
 use crate::db::DB;
 use crate::env::Config;
 use std::net::SocketAddr;
@@ -15,6 +16,10 @@ use crate::object::RobjPtr;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::error::Error;
+use std::io::{Write, BufReader, BufRead, Read};
+use crate::util::*;
+use rand::prelude::*;
+use std::fs;
 
 
 pub struct Server {
@@ -52,7 +57,7 @@ pub struct Server {
     pub master_host: Option<String>,
     pub master_port: u16,
     pub master: Option<Rc<RefCell<Client>>>,
-    pub reply_state: i32,
+    pub reply_state: ReplyState,
     pub max_clients: usize,
     pub max_memory: usize,
 
@@ -112,7 +117,7 @@ impl Server {
             master_host: None,
             master_port: 0,
             master: None,
-            reply_state: 0,
+            reply_state: ReplyState::None,
             max_clients: config.max_clients,
             max_memory: config.max_memory,
 
@@ -237,6 +242,92 @@ impl Server {
                 warn!("Error trying to save the DB: {}", e.description());
             }
         }
+    }
+
+    pub fn sync_with_master(&mut self) -> Result<(), Box<dyn Error>> {
+        let addr = self.master_host.as_ref().unwrap();
+        let addr = format!("{}:{}", addr, self.master_port).parse()?;
+        let mut buf: [u8; 1024] = [0; 1024];
+        let mut line_buf = String::from("");
+        let mut socket = net::TcpStream::connect(&addr).map_err(|e| {
+            warn!("Unable to connect to MASTER: {}", addr);
+            e
+        })?;
+
+        let mut rng = rand::thread_rng();
+
+        // sync write
+        socket.write_all(b"*1\r\n$4\r\nsync\r\n").map_err(|e| {
+            warn!("I/O error writing to MASTER: {}", e.description());
+            e
+        })?;
+
+        let mut reader = BufReader::new(socket);
+        //sync read
+        reader.read_line(&mut line_buf).map_err(|e| {
+            warn!("I/O reading bulk count from MASTER: {}", e.description());
+            e
+        })?;
+        let mut dump_size = (&line_buf[1..]).parse::<usize>().map_err(|e| {
+            warn!("Error parsing dump size: {}", e.description());
+            e
+        })?;
+        info!("Receiving {} bytes data dump from MASTER", dump_size);
+
+        let temp_file = format!(
+            "temp-{}.{}.rdb",
+            unix_timestamp(&SystemTime::now()),
+            rng.gen::<usize>(),
+        );
+
+        {
+            let mut file = File::open(&temp_file).map_err(|e| {
+                warn!("Opening the temp file needed for MASTER <-> SLAVE synchronization: {}",
+                      e.description());
+                e
+            })?;
+
+            while dump_size > 0 {
+                let buf = &mut buf[..std::cmp::min(1024, dump_size)];
+                reader.read_exact(buf).map_err(|e| {
+                    warn!("I/O error trying to sync with MASTER: {}", e.description());
+                    e
+                })?;
+                file.write_all(buf).map_err(|e| {
+                    warn!("Write error writing to the DB dump file needed for MASTER <-> \
+                       SLAVE synchronization: {}", e.description());
+                    e
+                })?;
+                dump_size -= buf.len();
+            }
+        }
+
+        fs::rename(&temp_file, &self.db_filename).map_err(|e| {
+            warn!("Failed trying to rename the temp DB into dump.rdb \
+                   in MASTER <-> SLAVE synchronization: {}", e.description());
+            let _ = fs::remove_file(&temp_file);
+            e
+        })?;
+        self.flush_all();
+
+        self.rdb_load().map_err(|e| {
+            warn!("Failed trying to load the MASTER synchronization DB from disk");
+            e
+        })?;
+
+        let socket = reader.into_inner();
+        let fd = Rc::new(RefCell::new(Fdp::Stream(socket)));
+        let master = Client::with_fd(fd);
+        master.borrow_mut().flags |= CLIENT_MASTER;
+        self.master = Some(master);
+
+        self.reply_state = ReplyState::Connected;
+
+        Ok(())
+    }
+
+    pub fn rdb_load(&mut self) -> std::io::Result<()> {
+        rdb::rdb_load(self)
     }
 }
 

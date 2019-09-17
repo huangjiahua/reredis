@@ -49,6 +49,12 @@ pub fn parse_port(s: &str) -> Result<u16, ParseIntError> {
     s.parse::<u16>()
 }
 
+pub fn parse_port_from_bytes(b: &[u8]) -> Result<u16, Box<dyn Error>> {
+    let s = std::str::from_utf8(b)?;
+    let port = parse_port(s)?;
+    Ok(port)
+}
+
 #[inline]
 pub fn parse_usize_pair(s1: &str, s2: &str) -> Result<(usize, usize), ParseIntError> {
     let a: usize = parse_usize(s1)?;

@@ -45,7 +45,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn with_fd(fd: Fd, el: &mut AeEventLoop) -> Result<Rc<RefCell<Client>>, ()> {
+    pub fn with_fd_and_el(fd: Fd, el: &mut AeEventLoop) -> Result<Rc<RefCell<Client>>, ()> {
         let client = Rc::new(RefCell::new(Client {
             fd,
             flags: 0,
@@ -69,6 +69,23 @@ impl Client {
         )?;
 
         Ok(client)
+    }
+
+    pub fn with_fd(fd: Fd) -> Rc<RefCell<Client>> {
+        let client = Rc::new(RefCell::new(Client {
+            fd,
+            flags: 0,
+            query_buf: vec![],
+            last_interaction: SystemTime::now(),
+            bulk_len: None,
+            argv: vec![],
+            authenticate: false,
+            reply_state: ReplyState::None,
+            reply: vec![],
+            db_idx: 0,
+            slave_select_db: 0,
+        }));
+        client
     }
 
     pub fn parse_query_buf(&mut self) -> Result<(), CommandError> {

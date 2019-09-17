@@ -366,7 +366,7 @@ pub fn accept_handler(
     };
     debug!("Accepted {}:{}", info.ip(), info.port());
 
-    let c = match Client::with_fd(
+    let c = match Client::with_fd_and_el(
         Rc::new(RefCell::new(Fdp::Stream(stream))
         ), el) {
         Err(()) => {
@@ -631,7 +631,13 @@ pub fn server_cron(
             }
         }
     }
-    // TODO: check if we should connect to master
+
+    if let ReplyState::Connect = server.reply_state {
+        info!("Connecting to MASTER...");
+        if let Ok(_) = server.sync_with_master() {
+            info!("MASTER <-> SLAVE sync succeeded");
+        }
+    }
 
     1000
 }
