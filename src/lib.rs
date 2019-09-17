@@ -21,3 +21,4 @@ pub mod glob;
 pub mod zalloc;
 pub mod sort;
 pub mod rdb;
+pub mod replicate;

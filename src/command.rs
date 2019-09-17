@@ -1,6 +1,6 @@
 use std::mem::swap;
 use std::rc::Rc;
-use crate::client::Client;
+use crate::client::{Client, CLIENT_SLAVE, CLIENT_MONITOR};
 use crate::server::Server;
 use crate::ae::AeEventLoop;
 use crate::shared::{OK, ERR, NULL_BULK, CRLF, CZERO, CONE, COLON, WRONG_TYPE, PONG, EMPTY_MULTI_BULK};
@@ -1560,11 +1560,16 @@ pub fn info_command(
 
 pub fn monitor_command(
     client: &mut Client,
-    _server: &mut Server,
+    server: &mut Server,
     _el: &mut AeEventLoop,
 ) {
-// TODO
-    client.add_str_reply("-ERR not yet implemented\r\n");
+    if client.flags & CLIENT_SLAVE != 0 {
+        return;
+    }
+
+    client.flags |= CLIENT_SLAVE | CLIENT_MONITOR;
+    server.transfer_client_to_slaves(client, true);
+    client.add_reply(shared_object!(OK));
 }
 
 pub fn slaveof_command(

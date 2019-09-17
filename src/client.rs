@@ -9,11 +9,12 @@ use crate::server::Server;
 use crate::command::{lookup_command, CMD_DENY_OOM};
 use crate::util::*;
 use crate::zalloc;
+use crate::replicate;
 
-const CLIENT_CLOSE: i32 = 0b0001;
-const CLIENT_SLAVE: i32 = 0b0010;
-const CLIENT_MASTER: i32 = 0b0100;
-const CLIENT_MONITOR: i32 = 0b1000;
+pub const CLIENT_CLOSE: i32 = 0b0001;
+pub const CLIENT_SLAVE: i32 = 0b0010;
+pub const CLIENT_MASTER: i32 = 0b0100;
+pub const CLIENT_MONITOR: i32 = 0b1000;
 
 #[derive(Copy, Clone, PartialEq)]
 pub enum ReplyState {
@@ -28,7 +29,6 @@ pub enum ReplyState {
 
 pub struct Client {
     pub fd: Fd,
-    pub dict_id: usize,
     pub flags: i32,
     pub query_buf: Vec<u8>,
     pub last_interaction: SystemTime,
@@ -40,13 +40,14 @@ pub struct Client {
     pub reply: Vec<RobjPtr>,
 
     pub db_idx: usize,
+
+    pub slave_select_db: usize,
 }
 
 impl Client {
     pub fn with_fd(fd: Fd, el: &mut AeEventLoop) -> Result<Rc<RefCell<Client>>, ()> {
         let client = Rc::new(RefCell::new(Client {
             fd,
-            dict_id: 0,
             flags: 0,
             query_buf: vec![],
             last_interaction: SystemTime::now(),
@@ -56,6 +57,7 @@ impl Client {
             reply_state: ReplyState::None,
             reply: vec![],
             db_idx: 0,
+            slave_select_db: 0,
         }));
         el.create_file_event(
             Rc::clone(&client.borrow().fd),
@@ -138,6 +140,9 @@ impl Client {
 
         // TODO: save server dirty bit and tackle problems with slave server ans monitors
         (&cmd.proc)(self, server, el);
+        if !server.monitors.is_empty() {
+            replicate::feed_slaves(self, &server.monitors, self.db_idx);
+        }
 
         server.stat_num_commands += 1;
 

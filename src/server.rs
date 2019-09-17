@@ -24,7 +24,8 @@ pub struct Server {
     // TODO: sharing pool
     pub dirty: usize,
     pub clients: LinkedList<Rc<RefCell<Client>>>,
-    // TODO: slaves and monitors
+    pub slaves: LinkedList<Rc<RefCell<Client>>>,
+    pub monitors: LinkedList<Rc<RefCell<Client>>>,
     pub cron_loops: usize,
     pub last_save: SystemTime,
     pub used_memory: usize,
@@ -47,6 +48,11 @@ pub struct Server {
     pub db_filename: String,
     pub require_pass: Option<String>,
     // TODO: replication
+    pub is_slave: bool,
+    pub master_host: Option<String>,
+    pub master_port: u16,
+    pub master: Option<Rc<RefCell<Client>>>,
+    pub reply_state: i32,
     pub max_clients: usize,
     pub max_memory: usize,
 
@@ -79,6 +85,8 @@ impl Server {
             db,
             dirty: 0,
             clients: LinkedList::new(),
+            slaves: LinkedList::new(),
+            monitors: LinkedList::new(),
 
             cron_loops: 0,
             last_save: SystemTime::now(),
@@ -100,6 +108,11 @@ impl Server {
             db_filename: config.db_filename.clone(),
             require_pass: config.require_pass.clone(),
 
+            is_slave: false,
+            master_host: None,
+            master_port: 0,
+            master: None,
+            reply_state: 0,
             max_clients: config.max_clients,
             max_memory: config.max_memory,
 
@@ -131,6 +144,15 @@ impl Server {
             }
         }
         unreachable!()
+    }
+
+    pub fn transfer_client_to_slaves(&mut self, c: &Client, monitor: bool) {
+        let c = self.find_client(c);
+        if monitor {
+            self.monitors.push_back(c);
+        } else {
+            self.slaves.push_back(c);
+        }
     }
 
     pub fn close_timeout_clients(&mut self, _el: &mut AeEventLoop) {
