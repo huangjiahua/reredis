@@ -20,6 +20,7 @@ use crate::object::RobjEncoding;
 use crate::rdb;
 use nix::sys::wait::*;
 use nix::unistd::Pid;
+use crate::replicate;
 
 pub const REREDIS_VERSION: &str = "0.0.1";
 pub const REREDIS_REQUEST_MAX_SIZE: usize = 1024 * 1024 * 256;
@@ -580,21 +581,26 @@ pub fn server_cron(
         if let Ok(stat) = r {
             match stat {
                 WaitStatus::Exited(_, exitcode) => {
+                    let exit_ok: bool;
                     if exitcode == 0 {
                         info!("Background saving terminated with success");
                         server.dirty = 0;
                         server.last_save = SystemTime::now();
+                        exit_ok = true;
                     } else {
                         warn!("Background saving error");
+                        exit_ok = false;
                     }
                     server.bg_save_in_progress = false;
                     server.bg_save_child_pid = -1;
+                    replicate::update_slaves_waiting_bgsave(server, exit_ok);
                 }
                 WaitStatus::StillAlive => {}
                 _ => {
                     warn!("Background saving terminated by signal");
                     server.bg_save_in_progress = false;
                     server.bg_save_child_pid = -1;
+                    replicate::update_slaves_waiting_bgsave(server, false);
                 }
             }
         }

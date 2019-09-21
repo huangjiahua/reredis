@@ -62,7 +62,6 @@ pub fn rdb_save_in_background(server: &mut Server) -> Result<(), ()> {
             let _ = nix::unistd::close(fd);
             if let Ok(()) = rdb_save(server) {
                 exit(0);
-                return Ok(());
             } else {
                 exit(1);
             }

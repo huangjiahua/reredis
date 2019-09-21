@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use crate::object::{RobjPtr, Robj};
 use crate::shared::CRLF;
+use crate::server::Server;
 
 pub fn feed_slaves(
     this_client: &mut Client,
@@ -63,6 +64,13 @@ fn feed_select_db_command(slave: &mut Client) {
         )
     } else {
         unreachable!()
+    }
+}
+
+pub fn update_slaves_waiting_bgsave(server: &mut Server, ok: bool) {
+    let start_bgsave: bool = false;
+    for slave in server.slaves.iter() {
+
     }
 }
 
