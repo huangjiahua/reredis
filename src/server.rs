@@ -5,7 +5,7 @@ use mio::net::TcpListener;
 use mio::net;
 use std::rc::Rc;
 use std::cell::RefCell;
-use crate::client::{Client, ReplyState, CLIENT_MASTER};
+use crate::client::{Client, ReplyState, CLIENT_MASTER, CLIENT_SLAVE, CLIENT_MONITOR};
 use crate::db::DB;
 use crate::env::Config;
 use std::net::SocketAddr;
@@ -126,17 +126,49 @@ impl Server {
     }
 
     pub fn free_client(&mut self, c: &Rc<RefCell<Client>>) {
-        let mut i: i64 = -1;
-        for (k, client) in self.clients.iter().enumerate() {
-            if Rc::ptr_eq(&c, client) {
-                i = k as i64;
-                break;
-            }
+        self.clients.delete_first_n_filter(self.clients.len(), |x| {
+            Rc::ptr_eq(&c, x)
+        });
+    }
+
+    pub fn free_client_with_flags(&mut self, c: &Rc<RefCell<Client>>, flags: i32) {
+        self.clients.delete_first_n_filter(self.clients.len(), |x| {
+            Rc::ptr_eq(&c, x)
+        });
+        if flags & CLIENT_SLAVE != 0 {
+            let list = if c.borrow().flags & CLIENT_MONITOR != 0 {
+                &mut self.monitors
+            } else {
+                &mut self.slaves
+            };
+            list.delete_first_n_filter(list.len(), |x| {
+                Rc::ptr_eq(&c, x)
+            });
         }
-        if i >= 0 {
-            let mut tmp = self.clients.split_off(i as usize);
-            tmp.pop_front();
-            self.clients.append(&mut tmp);
+        if flags & CLIENT_MASTER != 0 {
+            self.master = None;
+            self.reply_state = ReplyState::Connect;
+        }
+    }
+
+    pub fn free_client_by_ref(&mut self, c: &Client) {
+        let ptr = c as *const Client;
+        self.clients.delete_first_n_filter(self.clients.len(), |x| {
+            ptr == x.as_ptr()
+        });
+        if c.flags & CLIENT_SLAVE != 0 {
+            let list = if c.flags & CLIENT_MONITOR != 0 {
+                &mut self.monitors
+            } else {
+                &mut self.slaves
+            };
+            list.delete_first_n_filter(list.len(), |x| {
+                ptr == x.as_ptr()
+            });
+        }
+        if c.flags & CLIENT_MASTER != 0 {
+            self.master = None;
+            self.reply_state = ReplyState::Connect;
         }
     }
 

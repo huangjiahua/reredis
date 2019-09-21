@@ -269,6 +269,7 @@ impl AeEventLoop {
             }
 
             let mut events = Events::with_capacity(self.file_events_num + 1);
+            debug!("poll!");
             let _ = poll.poll(&mut events, wait)?;
             for event in &events {
                 let t = event.token();
@@ -363,7 +364,7 @@ fn _ae_wait(fd: &Fd, mask: i32, duration: Duration) -> Result<i32, Box<dyn Error
     }
     // TODO: exception?
 
-    poll.register(fd.borrow().to_evented(), Token(0), ready, PollOpt::edge())?;
+    poll.register(fd.borrow().to_evented(), Token(0), ready, PollOpt::level())?;
     let mut events = Events::with_capacity(1);
 
     poll.poll(&mut events, Some(duration))?;

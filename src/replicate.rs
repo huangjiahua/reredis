@@ -1,10 +1,15 @@
-use crate::client::Client;
+use crate::client::{Client, ReplyState, ClientData};
 use crate::object::linked_list::LinkedList;
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::object::{RobjPtr, Robj};
 use crate::shared::CRLF;
 use crate::server::Server;
+use crate::ae::{AeEventLoop, AE_WRITABLE, default_ae_file_proc, default_ae_event_finalizer_proc, AE_READABLE};
+use std::fs::File;
+use std::error::Error;
+use crate::env::send_bulk_to_slave;
+use crate::rdb::rdb_save_in_background;
 
 pub fn feed_slaves(
     this_client: &mut Client,
@@ -67,10 +72,72 @@ fn feed_select_db_command(slave: &mut Client) {
     }
 }
 
-pub fn update_slaves_waiting_bgsave(server: &mut Server, ok: bool) {
-    let start_bgsave: bool = false;
-    for slave in server.slaves.iter() {
-
+pub fn update_slaves_waiting_bgsave(server: &mut Server, el: &mut AeEventLoop, ok: bool) {
+    let mut start_bgsave: bool = false;
+    let mut freed_clients: Vec<Rc<RefCell<Client>>> = vec![];
+    for slave_ptr in server.slaves.iter() {
+        let mut slave = slave_ptr.borrow_mut();
+        match slave.reply_state {
+            ReplyState::WaitBgSaveStart => {
+                start_bgsave = true;
+                slave.reply_state = ReplyState::WaitBgSaveEnd;
+            }
+            ReplyState::WaitBgSaveEnd => {
+                if !ok {
+                    freed_clients.push(Rc::clone(slave_ptr));
+                    warn!("SYNC failed. BGSAVE child returned an error");
+                    continue;
+                }
+                let file = match File::open(&server.db_filename) {
+                    Ok(f) => f,
+                    Err(err) => {
+                        warn!("SYNC failed. Can't open/stat DB after BGSAVE: {}",
+                              err.description());
+                        continue;
+                    }
+                };
+                let file_size = match file.metadata() {
+                    Ok(s) => s.len(),
+                    Err(err) => {
+                        warn!("SYNC failed. Can't open/stat DB after BGSAVE: {}",
+                              err.description());
+                        continue;
+                    }
+                };
+                slave.reply_db_off = 0;
+                slave.reply_db_size = file_size;
+                slave.reply_db_file = Some(file);
+                slave.reply_state = ReplyState::SendBulk;
+                el.delete_file_event(&slave.fd, AE_WRITABLE);
+                el.deregister_stream(slave.fd.borrow().unwrap_stream());
+                if let Err(_) = el.create_file_event(
+                    Rc::clone(&slave.fd),
+                    AE_WRITABLE,
+                    default_ae_file_proc,
+                    send_bulk_to_slave,
+                    ClientData::Client(Rc::clone(slave_ptr)),
+                    default_ae_event_finalizer_proc
+                ) {
+                    freed_clients.push(Rc::clone(slave_ptr));
+                    continue;
+                }
+            }
+            _ => {}
+        }
+    }
+    if start_bgsave {
+        if let Err(_) = rdb_save_in_background(server) {
+            warn!("SYNC failed. BGSAVE failed");
+            for slave_ptr in server.slaves.iter() {
+                freed_clients.push(Rc::clone(slave_ptr));
+            }
+        }
+    }
+    for slave_ptr in freed_clients.iter() {
+        server.free_client(slave_ptr);
+        el.delete_file_event(&slave_ptr.borrow().fd, AE_WRITABLE);
+        el.delete_file_event(&slave_ptr.borrow().fd, AE_WRITABLE | AE_READABLE);
+        el.deregister_stream(slave_ptr.borrow().fd.borrow().unwrap_stream());
     }
 }
 

@@ -1,9 +1,9 @@
 use crate::server::Server;
 use std::error::Error;
-use crate::ae::{AE_READABLE, default_ae_event_finalizer_proc, AeEventLoop, Fd, Fdp, default_ae_file_proc};
+use crate::ae::{AE_READABLE, default_ae_event_finalizer_proc, AeEventLoop, Fd, Fdp, default_ae_file_proc, AE_WRITABLE};
 use std::rc::Rc;
 use chrono::Local;
-use std::io::{Write, Read, ErrorKind};
+use std::io::{Write, Read, ErrorKind, SeekFrom, Seek};
 use log::{Level, LevelFilter};
 use std::cell::RefCell;
 use crate::client::*;
@@ -21,11 +21,13 @@ use crate::rdb;
 use nix::sys::wait::*;
 use nix::unistd::Pid;
 use crate::replicate;
+use std::ops::Deref;
 
 pub const REREDIS_VERSION: &str = "0.0.1";
 pub const REREDIS_REQUEST_MAX_SIZE: usize = 1024 * 1024 * 256;
 pub const REREDIS_MAX_WRITE_PER_EVENT: usize = 64 * 1024;
 pub const REREDIS_EXPIRE_LOOKUPS_PER_CRON: usize = 100;
+pub const REREIDS_IO_BUF_LEN: usize = 1024;
 
 pub struct Config {
     pub config_file: Option<String>,
@@ -396,10 +398,68 @@ fn free_client_occupied_in_el(
     el: &mut AeEventLoop,
     client_ptr: &Rc<RefCell<Client>>,
     stream: &TcpStream,
+    flags: i32,
 ) {
-    server.free_client(&client_ptr);
+    server.free_client_with_flags(&client_ptr, flags);
     el.try_delete_occupied();
     el.deregister_stream(stream);
+}
+
+fn free_active_client(
+    server: &mut Server,
+    el: &mut AeEventLoop,
+    client: &Client,
+    socket: &TcpStream,
+) {
+    server.free_client_by_ref(client);
+    el.try_delete_occupied();
+    el.deregister_stream(socket);
+}
+
+pub fn read_query_from_client2(
+    server: &mut Server,
+    el: &mut AeEventLoop,
+    fd: &Fd,
+    data: &ClientData,
+    _mask: i32,
+) {
+    let client_ptr = Rc::clone(data.unwrap_client());
+    let mut client = client_ptr.borrow_mut();
+    let mut fd_ref = fd.borrow_mut();
+    let socket = fd_ref.unwrap_stream_mut();
+
+    let read_len = REREIDS_IO_BUF_LEN;
+
+
+    let curr_len = client.query_buf.len();
+    client.query_buf.resize(curr_len + read_len, 0u8);
+
+    let n_read = match socket.read(&mut client.query_buf[curr_len..]) {
+        Ok(n) => n,
+        Err(e) => {
+            if let ErrorKind::Interrupted = e.kind() {} else {
+                debug!("Reading from client: {}", e.description());
+                free_active_client(server, el, client.deref(), socket);
+            }
+            return;
+        }
+    };
+
+    if n_read == 0 {
+        debug!("Reading from client: {}", "Client closed connection");
+        free_active_client(server, el, client.deref(), socket);
+        return;
+    }
+
+    client.last_interaction = SystemTime::now();
+    if client.flags & CLIENT_MASTER != 0 {
+        client.reply_off += n_read;
+    }
+
+    // TODO: close client if query buffer's len exceed max value
+    client.query_buf.resize(curr_len + n_read, 0);
+
+    client.process_input_buffer(server, el);
 }
 
 pub fn read_query_from_client(
@@ -407,7 +467,7 @@ pub fn read_query_from_client(
     el: &mut AeEventLoop,
     fd: &Fd,
     data: &ClientData,
-    _mask: i32
+    _mask: i32,
 ) {
     let client_ptr = Rc::clone(data.unwrap_client());
     let mut fd_ref = fd.as_ref().borrow_mut();
@@ -421,7 +481,7 @@ pub fn read_query_from_client(
                 ErrorKind::Interrupted => 0,
                 _ => {
                     debug!("Reading from client: {}", err.description());
-                    free_client_occupied_in_el(server, el, &client_ptr, stream);
+                    free_client_occupied_in_el(server, el, &client_ptr, stream, client_ptr.borrow().flags);
                     return;
                 }
             }
@@ -430,7 +490,7 @@ pub fn read_query_from_client(
             match n {
                 0 => {
                     debug!("Client closed connection");
-                    free_client_occupied_in_el(server, el, &client_ptr, stream);
+                    free_client_occupied_in_el(server, el, &client_ptr, stream, client_ptr.borrow().flags);
                     return;
                 }
                 _ => n,
@@ -450,7 +510,7 @@ pub fn read_query_from_client(
     let mut client = client_ptr.as_ref().borrow_mut();
 
     loop {
-        if let Some(_bulk_len) = client.bulk_len {
+        if let Some(_) = client.bulk_len {
             unimplemented!()
         } else {
             let p = client.query_buf
@@ -462,7 +522,7 @@ pub fn read_query_from_client(
             if let Some(_) = p {
                 if let Err(e) = client.parse_query_buf() {
                     debug!("{}", e.description());
-                    free_client_occupied_in_el(server, el, &client_ptr, stream);
+                    free_client_occupied_in_el(server, el, &client_ptr, stream, client.flags);
                     return;
                 }
                 if client.argc() > 0 {
@@ -470,9 +530,9 @@ pub fn read_query_from_client(
                         debug!("{}", e.description());
                         match e {
                             CommandError::Quit =>
-                                free_client_occupied_in_el(server, el, &client_ptr, stream),
+                                free_client_occupied_in_el(server, el, &client_ptr, stream, client.flags),
                             CommandError::Close =>
-                                free_client_occupied_in_el(server, el, &client_ptr, stream),
+                                free_client_occupied_in_el(server, el, &client_ptr, stream, client.flags),
                             _ => {}
                         }
                         return;
@@ -483,7 +543,7 @@ pub fn read_query_from_client(
                 }
             } else if client.query_buf.len() > REREDIS_REQUEST_MAX_SIZE {
                 debug!("Client protocol error");
-                free_client_occupied_in_el(server, el, &client_ptr, stream);
+                free_client_occupied_in_el(server, el, &client_ptr, stream, client.flags);
                 return;
             }
         }
@@ -520,7 +580,7 @@ pub fn send_reply_to_client(
         match write_result {
             Err(e) => if e.kind() != ErrorKind::Interrupted {
                 debug!("Error writing to client: {}", e.description());
-                free_client_occupied_in_el(server, el, data.unwrap_client(), stream);
+                free_client_occupied_in_el(server, el, data.unwrap_client(), stream, client.flags);
                 return;
             }
             Ok(_) => written_bytes += n,
@@ -536,6 +596,78 @@ pub fn send_reply_to_client(
         client.reply.clear();
     } else {
         client.reply.drain(0..written_elem);
+    }
+}
+
+pub fn send_bulk_to_slave(
+    server: &mut Server,
+    el: &mut AeEventLoop,
+    fd: &Fd,
+    data: &ClientData,
+    _mask: i32,
+) {
+    let mut buf: [u8; REREIDS_IO_BUF_LEN] = [0; REREIDS_IO_BUF_LEN];
+    let client_ptr = data.unwrap_client();
+    let mut slave = client_ptr.borrow_mut();
+    let flags = slave.flags;
+    let buf_len;
+    {
+        let mut fd_ref = fd.borrow_mut();
+        let stream = fd_ref.unwrap_stream_mut();
+        if slave.reply_db_off == 0 {
+            let bulk_len = format!("${}\r\n", slave.reply_db_size);
+            if let Err(_) = stream.write_all(bulk_len.as_bytes()) {
+                free_client_occupied_in_el(server, el, client_ptr, stream, flags);
+                return;
+            }
+        }
+
+        let file = slave.reply_db_file.as_mut().unwrap();
+        if let Err(e) = file.seek(SeekFrom::Start(0)) {
+            warn!("Seek Error sending DB to slave: {}", e.description());
+            free_client_occupied_in_el(server, el, client_ptr, stream, flags);
+        }
+        buf_len = match file.read(&mut buf) {
+            Ok(0) => {
+                warn!("Read error sending DB to slave: {}", "premature EOF");
+                free_client_occupied_in_el(server, el, client_ptr, stream, flags);
+                return;
+            }
+            Err(e) => {
+                warn!("Read error sending DB to slave: {}", e.description());
+                free_client_occupied_in_el(server, el, client_ptr, stream, flags);
+                return;
+            }
+            Ok(size) => {
+                size
+            }
+        };
+        if let Err(e) = stream.write_all(&buf[..buf_len]) {
+            warn!("Write error sending DB to slave: {}", e.description());
+            free_client_occupied_in_el(server, el, client_ptr, stream, flags);
+            return;
+        }
+    }
+
+    slave.reply_db_off += buf_len as u64;
+    if slave.reply_db_off == slave.reply_db_size {
+        let _ = slave.reply_db_file.take();
+        el.delete_file_event(fd, AE_WRITABLE);
+        el.deregister_stream(fd.borrow().unwrap_stream());
+        slave.reply_state = ReplyState::Online;
+        if let Err(_) = el.create_file_event(
+            Rc::clone(fd),
+            AE_WRITABLE,
+            default_ae_file_proc,
+            send_reply_to_client,
+            ClientData::Client(Rc::clone(client_ptr)),
+            default_ae_event_finalizer_proc,
+        ) {
+            server.free_client(client_ptr);
+            return;
+        }
+        slave.add_str_reply("");
+        info!("Synchronization with slave succeeded");
     }
 }
 
@@ -593,14 +725,14 @@ pub fn server_cron(
                     }
                     server.bg_save_in_progress = false;
                     server.bg_save_child_pid = -1;
-                    replicate::update_slaves_waiting_bgsave(server, exit_ok);
+                    replicate::update_slaves_waiting_bgsave(server, el, exit_ok);
                 }
                 WaitStatus::StillAlive => {}
                 _ => {
                     warn!("Background saving terminated by signal");
                     server.bg_save_in_progress = false;
                     server.bg_save_child_pid = -1;
-                    replicate::update_slaves_waiting_bgsave(server, false);
+                    replicate::update_slaves_waiting_bgsave(server, el, false);
                 }
             }
         }

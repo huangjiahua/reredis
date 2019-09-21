@@ -10,6 +10,7 @@ use crate::command::{lookup_command, CMD_DENY_OOM};
 use crate::util::*;
 use crate::zalloc;
 use crate::replicate;
+use std::fs::File;
 
 pub const CLIENT_CLOSE: i32 = 0b0001;
 pub const CLIENT_SLAVE: i32 = 0b0010;
@@ -27,17 +28,36 @@ pub enum ReplyState {
     Online,
 }
 
+#[derive(Copy, Clone, PartialEq)]
+pub enum RequestType {
+    Unknown,
+    MultiBulk,
+    Inline,
+}
+
+enum ProcessQueryError {
+    Protocol(usize),
+    NotEnough,
+}
+
 pub struct Client {
     pub fd: Fd,
     pub flags: i32,
     pub query_buf: Vec<u8>,
     pub last_interaction: SystemTime,
-    pub bulk_len: Option<usize>,
     pub argv: Vec<RobjPtr>,
 
     pub authenticate: bool,
     pub reply_state: ReplyState,
     pub reply: Vec<RobjPtr>,
+    pub reply_db_file: Option<File>,
+    pub reply_db_off: u64,
+    pub reply_db_size: u64,
+    pub reply_off: usize,
+
+    pub request_type: RequestType,
+    pub multi_bulk_len: usize,
+    pub bulk_len: Option<usize>,
 
     pub db_idx: usize,
 
@@ -46,19 +66,9 @@ pub struct Client {
 
 impl Client {
     pub fn with_fd_and_el(fd: Fd, el: &mut AeEventLoop) -> Result<Rc<RefCell<Client>>, ()> {
-        let client = Rc::new(RefCell::new(Client {
-            fd,
-            flags: 0,
-            query_buf: vec![],
-            last_interaction: SystemTime::now(),
-            bulk_len: None,
-            argv: vec![],
-            authenticate: false,
-            reply_state: ReplyState::None,
-            reply: vec![],
-            db_idx: 0,
-            slave_select_db: 0,
-        }));
+        let client = Rc::new(RefCell::new(
+            Self::new_default_client(fd)
+        ));
         el.create_file_event(
             Rc::clone(&client.borrow().fd),
             AE_READABLE | AE_WRITABLE,
@@ -72,24 +82,46 @@ impl Client {
     }
 
     pub fn with_fd(fd: Fd) -> Rc<RefCell<Client>> {
-        let client = Rc::new(RefCell::new(Client {
+        let client = Rc::new(RefCell::new(
+            Self::new_default_client(fd)
+        ));
+        client
+    }
+
+    fn new_default_client(fd: Fd) -> Client {
+        Client {
             fd,
             flags: 0,
             query_buf: vec![],
             last_interaction: SystemTime::now(),
-            bulk_len: None,
             argv: vec![],
             authenticate: false,
             reply_state: ReplyState::None,
             reply: vec![],
+            reply_db_file: None,
+            reply_db_off: 0,
+            reply_db_size: 0,
+            reply_off: 0,
+
+            request_type: RequestType::Unknown,
+            multi_bulk_len: 0,
+            bulk_len: None,
+
             db_idx: 0,
             slave_select_db: 0,
-        }));
-        client
+        }
     }
 
     pub fn parse_query_buf(&mut self) -> Result<(), CommandError> {
         assert!(self.argv.is_empty());
+
+        // parse inline
+        if self.query_buf[0] != b'*' {
+            self.parse_inline_query()?;
+            self.query_buf.clear();
+            return Ok(());
+        }
+
         let iter = match protocol::decode(&self.query_buf) {
             Err(_) => return Err(CommandError::Malformed),
             Ok(i) => i,
@@ -105,6 +137,176 @@ impl Client {
 
         self.query_buf.clear();
         Ok(())
+    }
+
+    fn parse_inline_query(&mut self) -> Result<(), CommandError> {
+        let command = match std::str::from_utf8(&self.query_buf) {
+            Ok(s) => s,
+            Err(_) => return Err(CommandError::Malformed),
+        };
+        for k in command.split_ascii_whitespace() {
+            self.argv.push(Robj::create_string_object(k));
+        }
+        Ok(())
+    }
+
+    pub fn process_input_buffer(&mut self, server: &mut Server, el: &mut AeEventLoop) {
+        while !self.query_buf.is_empty() {
+            if let RequestType::Unknown = self.request_type {
+                if self.query_buf[0] == b'*' {
+                    self.request_type = RequestType::MultiBulk;
+                } else {
+                    self.request_type = RequestType::Inline;
+                }
+
+                let result = match self.request_type {
+                    RequestType::Inline => {
+                        self.process_inline_buffer()
+                    }
+                    RequestType::MultiBulk => {
+                        self.process_multi_bulk_buffer()
+                    }
+                    _ => {
+                        unreachable!();
+                    }
+                };
+
+                if let Err(_) = result {
+                    // TODO: async free client with protocol error
+                    break;
+                }
+
+                if self.argc() == 0 {
+                    self.reset();
+                } else {
+                    if let Ok(_) = self.process_command(server, el) {
+                        self.reset()
+                    }
+                }
+            }
+        }
+    }
+
+    fn process_inline_buffer(&mut self) -> Result<(), ProcessQueryError> {
+        unimplemented!()
+    }
+
+    fn process_multi_bulk_buffer(&mut self) -> Result<(), ProcessQueryError> {
+        let mut new_line;
+        let mut pos: usize = 0;
+        if self.multi_bulk_len == 0 {
+            assert_eq!(self.argc(), 0);
+            new_line = self.query_buf.iter()
+                .enumerate()
+                .find(|(_, ch)| **ch == b'\r')
+                .map(|x| x.0);
+
+            pos = new_line.ok_or(ProcessQueryError::NotEnough)?;
+
+            // TODO: if pos exceed max inline length, return error
+
+            // buffer should also contain '\n'
+            if pos > self.query_buf.len() - 2 {
+                return Err(ProcessQueryError::NotEnough);
+            }
+
+            assert_eq!(self.query_buf[0], b'*');
+
+            let ll = bytes_to_i64(&self.query_buf[1..pos])
+                .map_err(|_| ())
+                .and_then(|x| {
+                    if x > 1024 * 1024 {
+                        Err(())
+                    } else {
+                        Ok(x)
+                    }
+                })
+                .map_err(|_| {
+                    self.add_str_reply("-ERR Protocol Error: invalid bulk length");
+                    ProcessQueryError::Protocol(1)
+                })?;
+
+            pos += 2;
+
+            if ll <= 0 {
+                self.query_buf.drain(0..pos);
+                return Ok(());
+            }
+
+            self.multi_bulk_len = ll as usize;
+
+            if !self.argv.is_empty() {
+                self.argv.clear();
+            }
+
+            self.argv.reserve(self.multi_bulk_len);
+        }
+
+        assert!(self.multi_bulk_len > 0);
+
+        while self.multi_bulk_len > 0 {
+            if let None = self.bulk_len {
+                new_line = self.query_buf.iter()
+                    .enumerate()
+                    .find(|(_, ch)| **ch == b'\r')
+                    .map(|x| x.0);
+
+                let new_line = match new_line {
+                    None => break,
+                    Some(n) => n,
+                };
+                // TODO: if pos exceed max inline length, return error
+
+                if pos > self.query_buf.len() - 2 {
+                    break;
+                }
+
+                if self.query_buf[pos] != b'$' {
+                    self.add_reply_from_string(
+                        format!("-ERR Protocol Error: expected '$', got {}",
+                                self.query_buf[pos])
+                    );
+                    return Err(ProcessQueryError::Protocol(pos));
+                }
+
+                let ll = bytes_to_usize(&self.query_buf[pos + 1..new_line])
+                    .map_err(|_| ())
+                    .and_then(|x| {
+                        if x > 512 * 1024 * 1024 {
+                            Err(())
+                        } else {
+                            Ok(x)
+                        }
+                    })
+                    .map_err(|_| {
+                        self.add_str_reply("-ERR Protocol Error: invalid bulk length");
+                        ProcessQueryError::Protocol(pos)
+                    })?;
+
+                pos = new_line + 2;
+                self.bulk_len = Some(ll);
+            }
+
+            if self.query_buf.len() - pos < self.bulk_len.unwrap() + 2 {
+                break;
+            } else {
+                let arg = Robj::create_bytes_object(
+                    &self.query_buf[pos..pos + self.bulk_len.unwrap()]
+                );
+                self.argv.push(arg);
+                self.bulk_len = None;
+                self.multi_bulk_len -= 1;
+            }
+        }
+        if pos > 0 {
+            self.query_buf.drain(0..pos);
+        }
+
+        if self.multi_bulk_len == 0 {
+            return Ok(())
+        }
+
+        Err(ProcessQueryError::NotEnough)
     }
 
     pub fn process_command(
