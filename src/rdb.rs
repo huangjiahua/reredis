@@ -62,6 +62,7 @@ pub fn rdb_save_in_background(server: &mut Server) -> Result<(), ()> {
             let _ = nix::unistd::close(fd);
             if let Ok(()) = rdb_save(server) {
                 exit(0);
+                return Ok(());
             } else {
                 exit(1);
             }
@@ -293,7 +294,10 @@ pub fn rdb_load(server: &mut Server) -> io::Result<()> {
     reader.read_exact(&mut buf[0..9])?;
     check_magic_number(&buf[0..5])?;
     let first_db_selector = reader.load_u8()?;
-    check_db_selector(first_db_selector)?;
+    if let Err(_) = check_db_selector(first_db_selector) {
+        info!("Empty rdb file");
+        return Ok(());
+    }
 
     loop {
         let not_end = reader.load_db(server)?;
