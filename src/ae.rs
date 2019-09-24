@@ -120,6 +120,46 @@ impl AeEventLoop {
         ready
     }
 
+    pub fn create_file_event2(
+        &mut self,
+        fd: Fd,
+        mask: i32,
+        file_proc: AeFileProc,
+        client_data: ClientData,
+    ) -> Result<(), ()> {
+        let token = Token(fd.as_ptr() as usize);
+        let mut fe = self.file_events_hash.remove(&token).unwrap_or(
+            AeFileEvent::new(fd)
+        );
+
+        if fe.mask == 0 {
+            assert_ne!(mask, 0);
+            self.poll.register(
+                fe.fd.borrow().to_evented(),
+                token,
+                Self::readiness(mask),
+                PollOpt::level(),
+            ).unwrap();
+        } else {
+            self.poll.reregister(
+                fe.fd.borrow().to_evented(),
+                token,
+                Self::readiness(fe.mask | mask),
+                PollOpt::level()
+            ).unwrap();
+        }
+
+        fe.mask |= mask;
+
+        if mask & AE_READABLE != 0 { fe.r_file_proc = file_proc; }
+        if mask & AE_WRITABLE != 0 { fe.w_file_proc = file_proc; }
+
+        fe.client_data = client_data;
+
+        let _ = self.file_events_hash.insert(token, fe);
+        Ok(())
+    }
+
     pub fn create_file_event(
         &mut self,
         fd: Fd,
@@ -358,6 +398,20 @@ struct AeFileEvent {
     w_file_proc: AeFileProc,
     finalizer_proc: AeEventFinalizerProc,
     client_data: ClientData,
+}
+
+impl AeFileEvent {
+    fn new(fd: Fd) -> AeFileEvent {
+        AeFileEvent {
+            fd,
+            mask: 0,
+            r_file_proc: default_ae_file_proc,
+            w_file_proc: default_ae_file_proc,
+            finalizer_proc: default_ae_event_finalizer_proc,
+            client_data: ClientData::Nil(),
+        }
+
+    }
 }
 
 struct AeTimeEvent {

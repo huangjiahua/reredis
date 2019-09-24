@@ -305,13 +305,11 @@ impl Env {
     }
 
     pub fn create_first_file_event(&mut self) -> Result<(), ()> {
-        self.el.create_file_event(
+        self.el.create_file_event2(
             Rc::clone(&self.server.fd),
             AE_READABLE,
             accept_handler,
-            default_ae_file_proc,
             ClientData::Nil(),
-            default_ae_event_finalizer_proc,
         )?;
         Ok(())
     }
@@ -460,6 +458,9 @@ pub fn read_query_from_client(
     client.query_buf.resize(curr_len + n_read, 0);
 
     client.process_input_buffer(server, el);
+    if !client.reply.is_empty() {
+        // TODO: prepare sending reply
+    }
 }
 
 pub fn send_reply_to_client(
