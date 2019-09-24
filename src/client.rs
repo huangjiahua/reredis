@@ -17,6 +17,8 @@ pub const CLIENT_SLAVE: i32 = 0b0010;
 pub const CLIENT_MASTER: i32 = 0b0100;
 pub const CLIENT_MONITOR: i32 = 0b1000;
 
+pub const CLIENT_CLOSE_ASAP: i32 = 0b1_0000;
+
 #[derive(Copy, Clone, PartialEq)]
 pub enum ReplyState {
     None,
@@ -158,37 +160,75 @@ impl Client {
                 } else {
                     self.request_type = RequestType::Inline;
                 }
+            }
 
-                let result = match self.request_type {
-                    RequestType::Inline => {
-                        self.process_inline_buffer()
-                    }
-                    RequestType::MultiBulk => {
-                        self.process_multi_bulk_buffer()
-                    }
-                    _ => {
-                        unreachable!();
-                    }
-                };
-
-                if let Err(_) = result {
-                    // TODO: async free client with protocol error
-                    break;
+            let result = match self.request_type {
+                RequestType::Inline => {
+                    self.process_inline_buffer()
                 }
+                RequestType::MultiBulk => {
+                    self.process_multi_bulk_buffer()
+                }
+                _ => {
+                    unreachable!();
+                }
+            };
 
-                if self.argc() == 0 {
-                    self.reset();
-                } else {
-                    if let Ok(_) = self.process_command(server, el) {
-                        self.reset()
-                    }
+            if let Err(e) = result {
+                if let ProcessQueryError::Protocol(_) = e {
+                    server.async_free_client(self);
+                }
+                break;
+            }
+
+            if self.argc() == 0 {
+                self.reset();
+            } else {
+                if let Ok(_) = self.process_command(server, el) {
+                    self.reset()
                 }
             }
         }
     }
 
     fn process_inline_buffer(&mut self) -> Result<(), ProcessQueryError> {
-        unimplemented!()
+        let mut pos: usize;
+        let new_line = self.query_buf.iter()
+            .enumerate()
+            .find(|(_, ch)| **ch == b'\n')
+            .map(|x| x.0);
+
+        pos = new_line.ok_or(ProcessQueryError::NotEnough)?;
+        // TODO: max inline buffer
+
+        if pos > 0 && self.query_buf[pos - 1] == b'\r' {
+            pos -= 1;
+        }
+
+        let s = std::str::from_utf8(&self.query_buf[0..pos]);
+
+        let s = match s {
+            Ok(s) => s,
+            Err(_) => {
+                self.add_str_reply("-ERR Protocol Error: Unknown char\r\n");
+                return Err(ProcessQueryError::Protocol(0));
+            }
+        };
+
+        for arg in s.split_ascii_whitespace() {
+            self.argv.push(
+                Robj::create_string_object(arg)
+            );
+        }
+
+        if self.argv.is_empty() {
+            self.add_str_reply("-ERR Protocol error: unbalanced quotes in request\r\n");
+            return Err(ProcessQueryError::Protocol(0));
+        }
+
+        self.query_buf.drain(0..pos + 2);
+
+        Ok(())
     }
 
     fn process_multi_bulk_buffer(&mut self) -> Result<(), ProcessQueryError> {
@@ -222,7 +262,7 @@ impl Client {
                     }
                 })
                 .map_err(|_| {
-                    self.add_str_reply("-ERR Protocol Error: invalid bulk length");
+                    self.add_str_reply("-ERR Protocol Error: invalid bulk length\r\n");
                     ProcessQueryError::Protocol(1)
                 })?;
 
@@ -248,6 +288,7 @@ impl Client {
             if let None = self.bulk_len {
                 new_line = self.query_buf.iter()
                     .enumerate()
+                    .skip(pos)
                     .find(|(_, ch)| **ch == b'\r')
                     .map(|x| x.0);
 
@@ -263,8 +304,8 @@ impl Client {
 
                 if self.query_buf[pos] != b'$' {
                     self.add_reply_from_string(
-                        format!("-ERR Protocol Error: expected '$', got {}",
-                                self.query_buf[pos])
+                        format!("-ERR Protocol Error: expected '$', got {}\r\n",
+                                self.query_buf[pos] as char)
                     );
                     return Err(ProcessQueryError::Protocol(pos));
                 }
@@ -279,7 +320,7 @@ impl Client {
                         }
                     })
                     .map_err(|_| {
-                        self.add_str_reply("-ERR Protocol Error: invalid bulk length");
+                        self.add_str_reply("-ERR Protocol Error: invalid bulk length\r\n");
                         ProcessQueryError::Protocol(pos)
                     })?;
 
@@ -293,6 +334,7 @@ impl Client {
                 let arg = Robj::create_bytes_object(
                     &self.query_buf[pos..pos + self.bulk_len.unwrap()]
                 );
+                pos += self.bulk_len.unwrap() + 2;
                 self.argv.push(arg);
                 self.bulk_len = None;
                 self.multi_bulk_len -= 1;
@@ -303,7 +345,7 @@ impl Client {
         }
 
         if self.multi_bulk_len == 0 {
-            return Ok(())
+            return Ok(());
         }
 
         Err(ProcessQueryError::NotEnough)

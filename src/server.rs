@@ -5,7 +5,7 @@ use mio::net::TcpListener;
 use mio::net;
 use std::rc::Rc;
 use std::cell::RefCell;
-use crate::client::{Client, ReplyState, CLIENT_MASTER, CLIENT_SLAVE, CLIENT_MONITOR};
+use crate::client::{Client, ReplyState, CLIENT_MASTER, CLIENT_SLAVE, CLIENT_MONITOR, CLIENT_CLOSE_ASAP};
 use crate::db::DB;
 use crate::env::Config;
 use std::net::SocketAddr;
@@ -29,6 +29,7 @@ pub struct Server {
     // TODO: sharing pool
     pub dirty: usize,
     pub clients: LinkedList<Rc<RefCell<Client>>>,
+    pub clients_to_closed: LinkedList<*const Client>,
     pub slaves: LinkedList<Rc<RefCell<Client>>>,
     pub monitors: LinkedList<Rc<RefCell<Client>>>,
     pub cron_loops: usize,
@@ -52,7 +53,7 @@ pub struct Server {
     pub bind_addr: String,
     pub db_filename: String,
     pub require_pass: Option<String>,
-    // TODO: replication
+
     pub is_slave: bool,
     pub master_host: Option<String>,
     pub master_port: u16,
@@ -90,6 +91,7 @@ impl Server {
             db,
             dirty: 0,
             clients: LinkedList::new(),
+            clients_to_closed: LinkedList::new(),
             slaves: LinkedList::new(),
             monitors: LinkedList::new(),
 
@@ -153,7 +155,7 @@ impl Server {
 
     pub fn free_client_by_ref(&mut self, c: &Client) {
         let ptr = c as *const Client;
-        self.clients.delete_first_n_filter(self.clients.len(), |x| {
+        self.clients.delete_first_n_filter(1, |x| {
             ptr == x.as_ptr()
         });
         if c.flags & CLIENT_SLAVE != 0 {
@@ -170,6 +172,54 @@ impl Server {
             self.master = None;
             self.reply_state = ReplyState::Connect;
         }
+    }
+
+    fn free_client_by_ptr(&mut self, ptr: *const Client) -> Rc<RefCell<Client>> {
+        // only used in server_cron
+        // TODO: this can be improved
+        let client_rc = self.clients.iter()
+            .find(|x| ptr == x.as_ptr())
+            .map(|x| Rc::clone(x))
+            .unwrap();
+
+        self.clients.delete_first_n_filter(1, |x| {
+            Rc::ptr_eq(&client_rc, x)
+        });
+
+        {
+            let c = client_rc.borrow();
+            if c.flags & CLIENT_SLAVE != 0 {
+                let list = if c.flags & CLIENT_MONITOR != 0 {
+                    &mut self.monitors
+                } else {
+                    &mut self.slaves
+                };
+                list.delete_first_n_filter(list.len(), |x| {
+                    ptr == x.as_ptr()
+                });
+            }
+            if c.flags & CLIENT_MASTER != 0 {
+                self.master = None;
+                self.reply_state = ReplyState::Connect;
+            }
+        }
+
+        client_rc
+    }
+
+    pub fn free_clients_in_async_free_queue(&mut self, el: &mut AeEventLoop) {
+        while let Some(client) = self.clients_to_closed.pop_front() {
+            let client = self.free_client_by_ptr(client);
+            let client_ref = client.borrow();
+            el.delete_file_event(&client_ref.fd, AE_WRITABLE);
+            el.delete_file_event(&client_ref.fd, AE_WRITABLE | AE_READABLE);
+            el.deregister_stream(client_ref.fd.borrow().unwrap_stream());
+        }
+    }
+
+    pub fn async_free_client(&mut self, c: &mut Client) {
+        c.flags |= CLIENT_CLOSE_ASAP;
+        self.clients_to_closed.push_back(c as *const Client);
     }
 
     pub fn find_client(&self, c: &Client) -> Rc<RefCell<Client>> {

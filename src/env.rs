@@ -416,7 +416,7 @@ fn free_active_client(
     el.deregister_stream(socket);
 }
 
-pub fn read_query_from_client2(
+pub fn read_query_from_client(
     server: &mut Server,
     el: &mut AeEventLoop,
     fd: &Fd,
@@ -460,94 +460,6 @@ pub fn read_query_from_client2(
     client.query_buf.resize(curr_len + n_read, 0);
 
     client.process_input_buffer(server, el);
-}
-
-pub fn read_query_from_client(
-    server: &mut Server,
-    el: &mut AeEventLoop,
-    fd: &Fd,
-    data: &ClientData,
-    _mask: i32,
-) {
-    let client_ptr = Rc::clone(data.unwrap_client());
-    let mut fd_ref = fd.as_ref().borrow_mut();
-    let stream = fd_ref.unwrap_stream_mut();
-    let mut buf = [0u8; 1024];
-
-    let r = stream.read(&mut buf);
-    let nread: usize = match r {
-        Err(err) => {
-            match err.kind() {
-                ErrorKind::Interrupted => 0,
-                _ => {
-                    debug!("Reading from client: {}", err.description());
-                    free_client_occupied_in_el(server, el, &client_ptr, stream, client_ptr.borrow().flags);
-                    return;
-                }
-            }
-        }
-        Ok(n) => {
-            match n {
-                0 => {
-                    debug!("Client closed connection");
-                    free_client_occupied_in_el(server, el, &client_ptr, stream, client_ptr.borrow().flags);
-                    return;
-                }
-                _ => n,
-            }
-        }
-    };
-
-    if nread > 0 {
-        client_ptr.as_ref()
-            .borrow_mut()
-            .query_buf
-            .extend_from_slice(&buf[..nread]);
-    } else {
-        return;
-    }
-
-    let mut client = client_ptr.as_ref().borrow_mut();
-
-    loop {
-        if let Some(_) = client.bulk_len {
-            unimplemented!()
-        } else {
-            let p = client.query_buf
-                .iter()
-                .enumerate()
-                .find(|x| *x.1 == '\n' as u8)
-                .map(|x| *x.1);
-
-            if let Some(_) = p {
-                if let Err(e) = client.parse_query_buf() {
-                    debug!("{}", e.description());
-                    free_client_occupied_in_el(server, el, &client_ptr, stream, client.flags);
-                    return;
-                }
-                if client.argc() > 0 {
-                    if let Err(e) = client.process_command(server, el) {
-                        debug!("{}", e.description());
-                        match e {
-                            CommandError::Quit =>
-                                free_client_occupied_in_el(server, el, &client_ptr, stream, client.flags),
-                            CommandError::Close =>
-                                free_client_occupied_in_el(server, el, &client_ptr, stream, client.flags),
-                            _ => {}
-                        }
-                        return;
-                    }
-                    if client.query_buf.is_empty() {
-                        return;
-                    }
-                }
-            } else if client.query_buf.len() > REREDIS_REQUEST_MAX_SIZE {
-                debug!("Client protocol error");
-                free_client_occupied_in_el(server, el, &client_ptr, stream, client.flags);
-                return;
-            }
-        }
-    }
 }
 
 pub fn send_reply_to_client(
@@ -776,6 +688,8 @@ pub fn server_cron(
             info!("MASTER <-> SLAVE sync succeeded");
         }
     }
+
+    server.free_clients_in_async_free_queue(el);
 
     1000
 }
