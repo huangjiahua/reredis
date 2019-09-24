@@ -7,7 +7,7 @@ use mio::net::{TcpListener, TcpStream};
 use crate::server::Server;
 use std::cell::RefCell;
 use crate::client::*;
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap};
 use std::sync::atomic::Ordering;
 
 type AeTimeProc = fn(server: &mut Server, el: &mut AeEventLoop, id: i64, data: &ClientData) -> i32;
@@ -74,28 +74,30 @@ pub fn default_ae_event_finalizer_proc(_el: &mut AeEventLoop, _data: &ClientData
 
 pub struct AeEventLoop {
     time_event_next_id: i64,
-    file_events: Vec<Option<AeFileEvent>>,
+    //    file_events: Vec<Option<AeFileEvent>>,
+    file_events_hash: HashMap<Token, AeFileEvent>,
     file_events_num: usize,
-    occupied: Option<usize>,
+    delete_active: bool,
     time_events: VecDeque<AeTimeEvent>,
     poll: Poll,
     stop: bool,
 }
 
 impl AeEventLoop {
-    pub fn new(n: usize) -> AeEventLoop {
-        let mut el = AeEventLoop {
+    pub fn new(_n: usize) -> AeEventLoop {
+        let el = AeEventLoop {
             time_event_next_id: 0,
-            file_events: Vec::with_capacity(n),
+//            file_events: Vec::with_capacity(n),
+            file_events_hash: HashMap::new(),
             file_events_num: 0,
-            occupied: None,
+            delete_active: false,
             time_events: VecDeque::new(),
             poll: Poll::new().unwrap(),
             stop: false,
         };
-        for _ in 0..n {
-            el.file_events.push(None);
-        }
+//        for _ in 0..n {
+//            el.file_events.push(None);
+//        }
         el
     }
 
@@ -136,60 +138,70 @@ impl AeEventLoop {
             client_data,
         };
 
-        for i in 0..self.file_events.len() {
-            if self.file_events[i].is_none() &&
-                self.occupied.map(|x| x != i).unwrap_or(true) {
-                self.poll.register(
-                    fe.fd.borrow().to_evented(),
-                    Token(i),
-                    Self::readiness(mask),
-                    PollOpt::level(),
-                ).unwrap();
-                self.file_events[i] = Some(fe);
-                self.file_events_num += 1;
-                return Ok(());
-            }
-        }
+        let token = Token(fe.fd.as_ptr() as usize);
+        self.poll.register(
+            fe.fd.borrow().to_evented(),
+            token,
+            Self::readiness(mask),
+            PollOpt::level(),
+        ).unwrap();
+        let ok = self.file_events_hash.insert(token, fe).is_none();
+        assert!(ok);
 
-        Err(())
+//        for i in 0..self.file_events.len() {
+//            if self.file_events[i].is_none() &&
+//                self.occupied.map(|x| x != i).unwrap_or(true) {
+//                self.poll.register(
+//                    fe.fd.borrow().to_evented(),
+//                    Token(i),
+//                    Self::readiness(mask),
+//                    PollOpt::level(),
+//                ).unwrap();
+//                self.file_events[i] = Some(fe);
+//                self.file_events_num += 1;
+//                return Ok(());
+//            }
+//        }
+
+        Ok(())
     }
 
-    fn occupy_file_event(&mut self, i: usize) -> AeFileEvent {
-        self.occupied = Some(i);
-        self.file_events[i].take().unwrap()
-    }
+//    fn occupy_file_event(&mut self, i: usize) -> AeFileEvent {
+//        self.occupied = Some(i);
+//        self.file_events[i].take().unwrap()
+//    }
 
-    fn un_occupy_file_event(&mut self, i: usize, fe: AeFileEvent) {
-        if let Some(n) = self.occupied {
-            assert_eq!(n, i);
-            self.file_events[i] = Some(fe);
-        } else {
-            self.file_events_num -= 1;
-        }
-    }
+//    fn un_occupy_file_event(&mut self, i: usize, fe: AeFileEvent) {
+//        if let Some(n) = self.occupied {
+//            assert_eq!(n, i);
+//            self.file_events[i] = Some(fe);
+//        } else {
+//            self.file_events_num -= 1;
+//        }
+//    }
 
     pub fn try_delete_occupied(&mut self) {
-        assert!(self.occupied.is_some());
-        self.occupied = None;
+        assert!(!self.delete_active);
+        self.delete_active = false;
+    }
+
+    pub fn delete_file_event_by_ptr(&mut self, ptr: *mut Fdp, mask: i32) {
+        let token = Token(ptr as usize);
+        let fe = match self.file_events_hash.get(&token) {
+            None => return,
+            Some(e) => e,
+        };
+        if fe.mask != mask {
+            return;
+        }
+
+        self.file_events_hash.remove(&token).unwrap();
+        self.file_events_num -= 1;
+        assert_eq!(self.file_events_num, self.file_events_hash.len());
     }
 
     pub fn delete_file_event(&mut self, fd: &Fd, mask: i32) {
-        let mut del: Option<usize> = None;
-        for i in 0..self.file_events.len() {
-            let p = self.file_events[i]
-                .as_ref()
-                .map(|x| (&x.fd, x.mask));
-            if let Some(p) = p {
-                if Rc::ptr_eq(p.0, fd) && mask == p.1 {
-                    del = Some(i);
-                    break;
-                }
-            }
-        }
-        if let Some(i) = del {
-            self.file_events[i] = None;
-            self.file_events_num -= 1;
-        }
+        self.delete_file_event_by_ptr(fd.as_ptr(), mask);
     }
 
     pub fn create_time_event(
@@ -248,7 +260,7 @@ impl AeEventLoop {
 
         let poll = &self.poll;
 
-        if self.file_events.len() > 0 ||
+        if self.file_events_hash.len() > 0 ||
             ((flags & AE_TIME_EVENTS != 0) && (flags & AE_DONT_WAIT == 0)) {
             let mut wait: Option<Duration> = None;
             let mut shortest: Option<SystemTime> = None;
@@ -274,7 +286,8 @@ impl AeEventLoop {
             for event in &events {
                 let t = event.token();
 
-                let fe = self.occupy_file_event(t.0);
+//                let fe = self.occupy_file_event(t.0);
+                let fe = self.file_events_hash.remove(&t).unwrap();
                 let mut r_fired = false;
 
                 if (fe.mask & AE_READABLE != 0) && event.readiness().is_readable() {
@@ -287,7 +300,10 @@ impl AeEventLoop {
                     }
                 }
 
-                self.un_occupy_file_event(t.0, fe);
+                if !self.delete_active {
+                    let ok = self.file_events_hash.insert(t, fe).is_none();
+                    assert!(ok);
+                }
 
                 processed += 1;
             }
