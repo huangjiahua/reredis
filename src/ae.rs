@@ -68,16 +68,24 @@ fn _default_ae_time_proc(_server: &mut Server, _el: &mut AeEventLoop, _id: i64,
                          _data: &ClientData) -> i32 { 1 }
 
 pub fn default_ae_file_proc(_server: &mut Server, _el: &mut AeEventLoop,
-                            _fd: &Fd, _data: &ClientData, _mask: i32) {}
+                            _fd: &Fd, _data: &ClientData, _mask: i32) {
+    panic!("Default file proc should never be called");
+}
 
 pub fn default_ae_event_finalizer_proc(_el: &mut AeEventLoop, _data: &ClientData) {}
 
+enum ActiveReturnAction {
+    None,
+    Delete,
+    Merge(i32, AeFileProc),
+    Reduce(i32),
+}
+
 pub struct AeEventLoop {
     time_event_next_id: i64,
-    //    file_events: Vec<Option<AeFileEvent>>,
     file_events_hash: HashMap<Token, AeFileEvent>,
     file_events_num: usize,
-    delete_active: bool,
+    active_return_action: ActiveReturnAction,
     time_events: VecDeque<AeTimeEvent>,
     poll: Poll,
     stop: bool,
@@ -87,17 +95,13 @@ impl AeEventLoop {
     pub fn new(_n: usize) -> AeEventLoop {
         let el = AeEventLoop {
             time_event_next_id: 0,
-//            file_events: Vec::with_capacity(n),
             file_events_hash: HashMap::new(),
             file_events_num: 0,
-            delete_active: false,
+            active_return_action: ActiveReturnAction::None,
             time_events: VecDeque::new(),
             poll: Poll::new().unwrap(),
             stop: false,
         };
-//        for _ in 0..n {
-//            el.file_events.push(None);
-//        }
         el
     }
 
@@ -120,7 +124,51 @@ impl AeEventLoop {
         ready
     }
 
-    pub fn create_file_event2(
+    pub fn async_modify_active_file_event(
+        &mut self,
+        mask: i32,
+        file_proc: AeFileProc,
+    ) {
+        self.active_return_action = ActiveReturnAction::Merge(mask, file_proc);
+    }
+
+    pub fn async_reduce_active_file_event(
+        &mut self,
+        mask: i32,
+    ) {
+        self.active_return_action = ActiveReturnAction::Reduce(mask);
+    }
+
+    pub fn modify_file_event(
+        &mut self,
+        token: Token,
+        socket: &TcpStream,
+        mask: i32,
+        file_proc: AeFileProc,
+    ) -> Result<(), ()> {
+        let fe = self.file_events_hash.get_mut(&token).unwrap();
+
+        self.poll.reregister(
+            socket,
+            token,
+            Self::readiness(fe.mask | mask),
+            PollOpt::level(),
+        ).unwrap();
+
+        fe.mask |= mask;
+
+        if mask & AE_READABLE != 0 { fe.r_file_proc = file_proc; }
+        if mask & AE_WRITABLE != 0 { fe.w_file_proc = file_proc; }
+
+        Ok(())
+    }
+
+
+    pub fn async_delete_active_file_event(&mut self) {
+        self.active_return_action = ActiveReturnAction::Delete;
+    }
+
+    pub fn create_file_event(
         &mut self,
         fd: Fd,
         mask: i32,
@@ -145,7 +193,7 @@ impl AeEventLoop {
                 fe.fd.borrow().to_evented(),
                 token,
                 Self::readiness(fe.mask | mask),
-                PollOpt::level()
+                PollOpt::level(),
             ).unwrap();
         }
 
@@ -160,78 +208,75 @@ impl AeEventLoop {
         Ok(())
     }
 
-    pub fn create_file_event(
-        &mut self,
-        fd: Fd,
-        mask: i32,
-        file_proc: AeFileProc,
-        w_file_proc: AeFileProc,
-        client_data: ClientData,
-        finalizer_proc: AeEventFinalizerProc,
-    ) -> Result<(), ()> {
-        let fe = AeFileEvent {
-            fd,
-            mask,
-            r_file_proc: file_proc,
-            w_file_proc,
-            finalizer_proc,
-            client_data,
-        };
+    fn return_active(&mut self, token: Token, mut fe: AeFileEvent) {
+        match self.active_return_action {
+            ActiveReturnAction::None => {
+                let _ = self.file_events_hash.insert(token, fe);
+            }
+            ActiveReturnAction::Delete => {}
+            ActiveReturnAction::Merge(mask, file_proc) => {
+                self.poll.reregister(
+                    fe.fd.borrow().to_evented(),
+                    token,
+                    Self::readiness(mask | fe.mask),
+                    PollOpt::level(),
+                ).unwrap();
 
-        let token = Token(fe.fd.as_ptr() as usize);
-        self.poll.register(
-            fe.fd.borrow().to_evented(),
-            token,
-            Self::readiness(mask),
-            PollOpt::level(),
-        ).unwrap();
-        let ok = self.file_events_hash.insert(token, fe).is_none();
-        assert!(ok);
+                if mask & AE_WRITABLE != 0 { fe.w_file_proc = file_proc; }
+                if mask & AE_READABLE != 0 { fe.r_file_proc = file_proc; }
 
-//        for i in 0..self.file_events.len() {
-//            if self.file_events[i].is_none() &&
-//                self.occupied.map(|x| x != i).unwrap_or(true) {
-//                self.poll.register(
-//                    fe.fd.borrow().to_evented(),
-//                    Token(i),
-//                    Self::readiness(mask),
-//                    PollOpt::level(),
-//                ).unwrap();
-//                self.file_events[i] = Some(fe);
-//                self.file_events_num += 1;
-//                return Ok(());
-//            }
-//        }
+                fe.mask |= mask;
 
-        Ok(())
+                let _ = self.file_events_hash.insert(token, fe);
+            }
+            ActiveReturnAction::Reduce(mask) => {
+                if mask == fe.mask {
+                    self.active_return_action = ActiveReturnAction::None;
+                    return;
+                }
+
+                fe.mask &= !mask;
+
+                self.poll.reregister(
+                    fe.fd.borrow().to_evented(),
+                    token,
+                    Self::readiness(fe.mask),
+                    PollOpt::level(),
+                ).unwrap();
+
+                if mask & AE_WRITABLE != 0 {
+                    fe.w_file_proc = default_ae_file_proc;
+                }
+                if mask & AE_READABLE != 0 {
+                    fe.r_file_proc = default_ae_file_proc;
+                }
+                let _ = self.file_events_hash.insert(token, fe);
+            }
+        }
+        self.active_return_action = ActiveReturnAction::None;
     }
 
-//    fn occupy_file_event(&mut self, i: usize) -> AeFileEvent {
-//        self.occupied = Some(i);
-//        self.file_events[i].take().unwrap()
-//    }
-
-//    fn un_occupy_file_event(&mut self, i: usize, fe: AeFileEvent) {
-//        if let Some(n) = self.occupied {
-//            assert_eq!(n, i);
-//            self.file_events[i] = Some(fe);
-//        } else {
-//            self.file_events_num -= 1;
-//        }
-//    }
-
-    pub fn try_delete_occupied(&mut self) {
-        assert!(!self.delete_active);
-        self.delete_active = false;
-    }
-
-    pub fn delete_file_event_by_ptr(&mut self, ptr: *mut Fdp, mask: i32) {
+    fn delete_file_event_by_ptr(&mut self, ptr: *mut Fdp, mask: i32) {
         let token = Token(ptr as usize);
-        let fe = match self.file_events_hash.get(&token) {
+        let fe = match self.file_events_hash.get_mut(&token) {
             None => return,
             Some(e) => e,
         };
         if fe.mask != mask {
+            fe.mask &= !mask;
+
+            let ready = if mask & AE_WRITABLE != 0 {
+                Ready::readable()
+            } else {
+                Ready::writable()
+            };
+
+            self.poll.reregister(
+                fe.fd.borrow().to_evented(),
+                token,
+                ready,
+                PollOpt::level(),
+            ).unwrap();
             return;
         }
 
@@ -321,12 +366,10 @@ impl AeEventLoop {
             }
 
             let mut events = Events::with_capacity(self.file_events_num + 1);
-            debug!("poll!");
             let _ = poll.poll(&mut events, wait)?;
             for event in &events {
                 let t = event.token();
 
-//                let fe = self.occupy_file_event(t.0);
                 let fe = self.file_events_hash.remove(&t).unwrap();
                 let mut r_fired = false;
 
@@ -340,10 +383,7 @@ impl AeEventLoop {
                     }
                 }
 
-                if !self.delete_active {
-                    let ok = self.file_events_hash.insert(t, fe).is_none();
-                    assert!(ok);
-                }
+                self.return_active(t, fe);
 
                 processed += 1;
             }
@@ -410,7 +450,6 @@ impl AeFileEvent {
             finalizer_proc: default_ae_event_finalizer_proc,
             client_data: ClientData::Nil(),
         }
-
     }
 }
 

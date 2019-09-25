@@ -5,13 +5,14 @@ use std::cell::RefCell;
 use crate::object::{RobjPtr, Robj};
 use crate::shared::CRLF;
 use crate::server::Server;
-use crate::ae::{AeEventLoop, AE_WRITABLE, default_ae_file_proc, default_ae_event_finalizer_proc, AE_READABLE};
+use crate::ae::{AeEventLoop, AE_WRITABLE, AE_READABLE};
 use std::fs::File;
 use std::error::Error;
-use crate::env::send_bulk_to_slave;
+use crate::env::{send_bulk_to_slave, send_reply_to_client};
 use crate::rdb::rdb_save_in_background;
 
 pub fn feed_slaves(
+    el: &mut AeEventLoop,
     this_client: &mut Client,
     slaves: &LinkedList<Rc<RefCell<Client>>>,
     db_idx: usize,
@@ -34,8 +35,14 @@ pub fn feed_slaves(
         if slave.as_ptr() == this_client as *mut Client {
             feed_one_slave(this_client, db_idx, &outv);
         } else {
-            let mut slave = slave.borrow_mut();
-            feed_one_slave(&mut slave, db_idx, &outv);
+            let mut slave_ref = slave.borrow_mut();
+            feed_one_slave(&mut slave_ref, db_idx, &outv);
+            let _ = el.create_file_event(
+                Rc::clone(&slave_ref.fd),
+                AE_WRITABLE,
+                send_reply_to_client,
+                ClientData::Client(Rc::clone(slave)),
+            );
         }
     }
 }
@@ -109,14 +116,12 @@ pub fn update_slaves_waiting_bgsave(server: &mut Server, el: &mut AeEventLoop, o
                 slave.reply_db_file = Some(file);
                 slave.reply_state = ReplyState::SendBulk;
                 el.delete_file_event(&slave.fd, AE_WRITABLE);
-                el.deregister_stream(slave.fd.borrow().unwrap_stream());
+//                el.deregister_stream(slave.fd.borrow().unwrap_stream());
                 if let Err(_) = el.create_file_event(
                     Rc::clone(&slave.fd),
                     AE_WRITABLE,
-                    default_ae_file_proc,
                     send_bulk_to_slave,
                     ClientData::Client(Rc::clone(slave_ptr)),
-                    default_ae_event_finalizer_proc
                 ) {
                     freed_clients.push(Rc::clone(slave_ptr));
                     continue;

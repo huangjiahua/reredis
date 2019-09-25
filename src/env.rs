@@ -1,6 +1,6 @@
 use crate::server::Server;
 use std::error::Error;
-use crate::ae::{AE_READABLE, default_ae_event_finalizer_proc, AeEventLoop, Fd, Fdp, default_ae_file_proc, AE_WRITABLE};
+use crate::ae::{AE_READABLE, default_ae_event_finalizer_proc, AeEventLoop, Fd, Fdp, AE_WRITABLE};
 use std::rc::Rc;
 use chrono::Local;
 use std::io::{Write, Read, ErrorKind, SeekFrom, Seek};
@@ -305,7 +305,7 @@ impl Env {
     }
 
     pub fn create_first_file_event(&mut self) -> Result<(), ()> {
-        self.el.create_file_event2(
+        self.el.create_file_event(
             Rc::clone(&self.server.fd),
             AE_READABLE,
             accept_handler,
@@ -399,7 +399,7 @@ fn free_client_occupied_in_el(
     flags: i32,
 ) {
     server.free_client_with_flags(&client_ptr, flags);
-    el.try_delete_occupied();
+    el.async_delete_active_file_event();
     el.deregister_stream(stream);
 }
 
@@ -410,7 +410,7 @@ fn free_active_client(
     socket: &TcpStream,
 ) {
     server.free_client_by_ref(client);
-    el.try_delete_occupied();
+    el.async_delete_active_file_event();
     el.deregister_stream(socket);
 }
 
@@ -423,30 +423,35 @@ pub fn read_query_from_client(
 ) {
     let client_ptr = Rc::clone(data.unwrap_client());
     let mut client = client_ptr.borrow_mut();
-    let mut fd_ref = fd.borrow_mut();
-    let socket = fd_ref.unwrap_stream_mut();
+    let n_read;
+    let curr_len;
 
-    let read_len = REREIDS_IO_BUF_LEN;
+    {
+        let mut fd_ref = fd.borrow_mut();
+        let socket = fd_ref.unwrap_stream_mut();
+
+        let read_len = REREIDS_IO_BUF_LEN;
 
 
-    let curr_len = client.query_buf.len();
-    client.query_buf.resize(curr_len + read_len, 0u8);
+        curr_len = client.query_buf.len();
+        client.query_buf.resize(curr_len + read_len, 0u8);
 
-    let n_read = match socket.read(&mut client.query_buf[curr_len..]) {
-        Ok(n) => n,
-        Err(e) => {
-            if let ErrorKind::Interrupted = e.kind() {} else {
-                debug!("Reading from client: {}", e.description());
-                free_active_client(server, el, client.deref(), socket);
+        n_read = match socket.read(&mut client.query_buf[curr_len..]) {
+            Ok(n) => n,
+            Err(e) => {
+                if let ErrorKind::Interrupted = e.kind() {} else {
+                    debug!("Reading from client: {}", e.description());
+                    free_active_client(server, el, client.deref(), socket);
+                }
+                return;
             }
+        };
+
+        if n_read == 0 {
+            debug!("Reading from client: {}", "Client closed connection");
+            free_active_client(server, el, client.deref(), socket);
             return;
         }
-    };
-
-    if n_read == 0 {
-        debug!("Reading from client: {}", "Client closed connection");
-        free_active_client(server, el, client.deref(), socket);
-        return;
     }
 
     client.last_interaction = SystemTime::now();
@@ -459,7 +464,9 @@ pub fn read_query_from_client(
 
     client.process_input_buffer(server, el);
     if !client.reply.is_empty() {
-        // TODO: prepare sending reply
+        if let Err(()) = client.prepare_to_write(el) {
+            client.reply.clear();
+        }
     }
 }
 
@@ -506,6 +513,7 @@ pub fn send_reply_to_client(
 
     client.last_interaction = SystemTime::now();
     if written_elem == client.reply.len() {
+        el.async_reduce_active_file_event(AE_WRITABLE);
         client.reply.clear();
     } else {
         client.reply.drain(0..written_elem);
@@ -565,20 +573,8 @@ pub fn send_bulk_to_slave(
     slave.reply_db_off += buf_len as u64;
     if slave.reply_db_off == slave.reply_db_size {
         let _ = slave.reply_db_file.take();
-        el.delete_file_event(fd, AE_WRITABLE);
-        el.deregister_stream(fd.borrow().unwrap_stream());
         slave.reply_state = ReplyState::Online;
-        if let Err(_) = el.create_file_event(
-            Rc::clone(fd),
-            AE_WRITABLE,
-            default_ae_file_proc,
-            send_reply_to_client,
-            ClientData::Client(Rc::clone(client_ptr)),
-            default_ae_event_finalizer_proc,
-        ) {
-            server.free_client(client_ptr);
-            return;
-        }
+        el.async_modify_active_file_event(AE_WRITABLE, send_reply_to_client);
         slave.add_str_reply("");
         info!("Synchronization with slave succeeded");
     }

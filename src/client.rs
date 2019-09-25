@@ -11,6 +11,7 @@ use crate::util::*;
 use crate::zalloc;
 use crate::replicate;
 use std::fs::File;
+use mio::Token;
 
 pub const CLIENT_CLOSE: i32 = 0b0001;
 pub const CLIENT_SLAVE: i32 = 0b0010;
@@ -44,6 +45,7 @@ enum ProcessQueryError {
 
 pub struct Client {
     pub fd: Fd,
+    pub token: Token,
     pub flags: i32,
     pub query_buf: Vec<u8>,
     pub last_interaction: SystemTime,
@@ -73,11 +75,9 @@ impl Client {
         ));
         el.create_file_event(
             Rc::clone(&client.borrow().fd),
-            AE_READABLE | AE_WRITABLE,
+            AE_READABLE,
             read_query_from_client,
-            send_reply_to_client,
             ClientData::Client(Rc::clone(&client)),
-            default_ae_event_finalizer_proc,
         )?;
 
         Ok(client)
@@ -91,8 +91,10 @@ impl Client {
     }
 
     fn new_default_client(fd: Fd) -> Client {
+        let token = Token(fd.as_ptr() as usize);
         Client {
             fd,
+            token,
             flags: 0,
             query_buf: vec![],
             last_interaction: SystemTime::now(),
@@ -402,7 +404,7 @@ impl Client {
         // TODO: save server dirty bit and tackle problems with slave server ans monitors
         (&cmd.proc)(self, server, el);
         if !server.monitors.is_empty() {
-            replicate::feed_slaves(self, &server.monitors, self.db_idx);
+            replicate::feed_slaves(el, self, &server.monitors, self.db_idx);
         }
 
         server.stat_num_commands += 1;
@@ -414,6 +416,16 @@ impl Client {
         Ok(())
     }
 
+    pub fn prepare_to_write(&mut self, el: &mut AeEventLoop) -> Result<(), ()> {
+        if self.flags & CLIENT_MASTER != 0 {
+            return Err(());
+        }
+
+        el.async_modify_active_file_event(AE_WRITABLE, send_reply_to_client);
+
+        Ok(())
+    }
+
     pub fn argc(&self) -> usize {
         self.argv.len()
     }
@@ -421,6 +433,7 @@ impl Client {
     pub fn reset(&mut self) {
         self.argv.clear();
         self.bulk_len = None;
+        self.request_type = RequestType::Unknown;
     }
 
     pub fn add_reply(&mut self, r: RobjPtr) {
@@ -446,6 +459,18 @@ impl Client {
         }
         self.reply.clear();
         self.reply.push(Robj::from_bytes(glued));
+    }
+
+    pub fn is_slave(&self) -> bool {
+        self.flags & CLIENT_SLAVE != 0
+    }
+
+    pub fn is_monitor(&self) -> bool {
+        self.flags & CLIENT_MONITOR != 0
+    }
+
+    pub fn is_master(&self) -> bool {
+        self.flags & CLIENT_MASTER != 0
     }
 }
 
