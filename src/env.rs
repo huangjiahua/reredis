@@ -681,7 +681,7 @@ pub fn server_cron(
 
     if let ReplyState::Connect = server.reply_state {
         info!("Connecting to MASTER...");
-        if let Ok(_) = server.sync_with_master() {
+        if let Ok(_) = server.sync_with_master(el) {
             info!("MASTER <-> SLAVE sync succeeded");
         }
     }

@@ -1,5 +1,5 @@
 use log::LevelFilter;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use crate::ae::*;
 use mio::net::TcpListener;
 use mio::net;
@@ -20,6 +20,7 @@ use std::io::{Write, BufReader, BufRead, Read};
 use crate::util::*;
 use rand::prelude::*;
 use std::fs;
+use std::process::exit;
 
 
 pub struct Server {
@@ -67,9 +68,11 @@ pub struct Server {
 
 impl Server {
     pub fn new(config: &Config) -> Server {
-        // TODO: change this
         let addr: SocketAddr = format!("{}:{}", config.bind_addr, config.port).parse().unwrap();
-        let server = TcpListener::bind(&addr).unwrap();
+        let server = TcpListener::bind(&addr).unwrap_or_else(|e| {
+            eprintln!("Error bind address {:?}: {}", addr, e.description());
+            exit(1);
+        });
         let fd = Rc::new(RefCell::new(Fdp::Listener(server)));
 
         let mut db: Vec<DB> = Vec::with_capacity(config.db_num);
@@ -84,6 +87,11 @@ impl Server {
 
         let shutdown_asap = Arc::new(AtomicBool::new(false));
         set_up_signal_handling(&shutdown_asap);
+
+        let reply_state = match config.master_host {
+            Some(_) => ReplyState::Connect,
+            _ => ReplyState::None,
+        };
 
         Server {
             port: config.port,
@@ -116,10 +124,10 @@ impl Server {
             require_pass: config.require_pass.clone(),
 
             is_slave: false,
-            master_host: None,
-            master_port: 0,
+            master_host: config.master_host.clone(),
+            master_port: config.master_port,
             master: None,
-            reply_state: ReplyState::None,
+            reply_state,
             max_clients: config.max_clients,
             max_memory: config.max_memory,
 
@@ -326,12 +334,12 @@ impl Server {
         }
     }
 
-    pub fn sync_with_master(&mut self) -> Result<(), Box<dyn Error>> {
+    pub fn sync_with_master(&mut self, el: &mut AeEventLoop) -> Result<(), Box<dyn Error>> {
         let addr = self.master_host.as_ref().unwrap();
-        let addr = format!("{}:{}", addr, self.master_port).parse()?;
+        let addr: SocketAddr = format!("{}:{}", addr, self.master_port).parse()?;
         let mut buf: [u8; 1024] = [0; 1024];
         let mut line_buf = String::from("");
-        let mut socket = net::TcpStream::connect(&addr).map_err(|e| {
+        let mut socket = std::net::TcpStream::connect(&addr).map_err(|e| {
             warn!("Unable to connect to MASTER: {}", addr);
             e
         })?;
@@ -339,21 +347,23 @@ impl Server {
         let mut rng = rand::thread_rng();
 
         // sync write
-        socket.write_all(b"*1\r\n$4\r\nsync\r\n").map_err(|e| {
+        socket.write_all(b"SYNC\r\n").map_err(|e| {
             warn!("I/O error writing to MASTER: {}", e.description());
             e
         })?;
 
-        let mut reader = BufReader::new(socket);
         //sync read
+        let mut reader = BufReader::new(socket);
         reader.read_line(&mut line_buf).map_err(|e| {
             warn!("I/O reading bulk count from MASTER: {}", e.description());
             e
         })?;
-        let mut dump_size = (&line_buf[1..]).parse::<usize>().map_err(|e| {
-            warn!("Error parsing dump size: {}", e.description());
-            e
-        })?;
+        let line_buf = line_buf.trim();
+        let mut dump_size =
+            bytes_to_usize(&line_buf.as_bytes()[1..]).map_err(|e| {
+                warn!("Error parsing dump size: {}", e.description());
+                e
+            })?;
         info!("Receiving {} bytes data dump from MASTER", dump_size);
 
         let temp_file = format!(
@@ -363,11 +373,15 @@ impl Server {
         );
 
         {
-            let mut file = File::open(&temp_file).map_err(|e| {
-                warn!("Opening the temp file needed for MASTER <-> SLAVE synchronization: {}",
-                      e.description());
-                e
-            })?;
+            let mut file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .open(&temp_file)
+                .map_err(|e| {
+                    warn!("Opening the temp file needed for MASTER <-> SLAVE synchronization: {}",
+                          e.description());
+                    e
+                })?;
 
             while dump_size > 0 {
                 let buf = &mut buf[..std::cmp::min(1024, dump_size)];
@@ -398,11 +412,18 @@ impl Server {
         })?;
 
         let socket = reader.into_inner();
+        let socket = net::TcpStream::from_stream(socket).map_err(|e| {
+            warn!("Error reconnecting to master: {}", e.description());
+            e
+        })?;
         let fd = Rc::new(RefCell::new(Fdp::Stream(socket)));
-        let master = Client::with_fd(fd);
+        let master = Client::with_fd_and_el(fd, el).map_err(|_| {
+            warn!("Failed trying to create client with master");
+            std::io::Error::new(std::io::ErrorKind::Other, "error creating client")
+        })?;
         master.borrow_mut().flags |= CLIENT_MASTER;
+        self.clients.push_back(Rc::clone(&master));
         self.master = Some(master);
-
         self.reply_state = ReplyState::Connected;
 
         Ok(())

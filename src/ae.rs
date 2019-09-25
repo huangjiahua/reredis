@@ -507,7 +507,6 @@ mod test {
     #[test]
     fn new_event_loop() {
         let el = AeEventLoop::new(1024);
-        assert_eq!(el.file_events.len(), 1024);
         assert_eq!(el.time_events.len(), 0);
     }
 }

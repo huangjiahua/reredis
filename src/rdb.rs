@@ -1,7 +1,7 @@
 use crate::server::Server;
 use std::io;
 use std::io::{Write, BufWriter, BufReader, Read};
-use std::fs::{File, OpenOptions};
+use std::fs::{File, OpenOptions, rename};
 use crate::db::DB;
 use crate::object::{RobjPtr, RobjEncoding, RobjType, Robj};
 use std::time::SystemTime;
@@ -78,11 +78,12 @@ pub fn rdb_kill_background_saving(server: &Server) {
 }
 
 pub fn rdb_save(server: &Server) -> io::Result<()> {
+    let temp_file_name = format!("temp-{}.rdb", rand::thread_rng().gen::<usize>());
     let file: File = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
-        .open(&server.db_filename)?;
+        .open(&temp_file_name)?;
 
     let mut writer = BufWriter::new(file);
 
@@ -97,6 +98,8 @@ pub fn rdb_save(server: &Server) -> io::Result<()> {
     writer.write_all(RDB_END_BUF)?;
     writer.write_all(RDB_NO_CHECKSUM)?;
     writer.flush()?;
+
+    rename(&temp_file_name, &server.db_filename)?;
     Ok(())
 }
 

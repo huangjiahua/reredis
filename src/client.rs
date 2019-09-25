@@ -402,9 +402,13 @@ impl Client {
         }
 
         // TODO: save server dirty bit and tackle problems with slave server ans monitors
+        let dirty = server.dirty;
         (&cmd.proc)(self, server, el);
         if !server.monitors.is_empty() {
             replicate::feed_slaves(el, self, &server.monitors, self.db_idx);
+        }
+        if !server.slaves.is_empty() && dirty < server.dirty {
+            replicate::feed_slaves(el, self, &server.slaves, self.db_idx);
         }
 
         server.stat_num_commands += 1;
