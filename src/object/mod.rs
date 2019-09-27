@@ -64,6 +64,7 @@ pub trait ObjectData {
     fn set_wrapper_ref(&self) -> &dyn SetWrapper { panic!("This is not as SetWrapper") }
     fn set_wrapper_mut(&mut self) -> &mut dyn SetWrapper { panic!("This is not as SetWrapper") }
     fn zset_ref(&self) -> &Zset { panic!("This is not a Zset") }
+    fn encoding(&self) -> RobjEncoding;
 }
 
 type Pointer = Box<dyn ObjectData>;
@@ -95,7 +96,7 @@ impl Robj {
     }
 
     pub fn string_len(&self) -> usize {
-        match self.encoding {
+        match self.encoding() {
             RobjEncoding::Int => {
                 self.integer().to_string().len()
             }
@@ -148,7 +149,7 @@ impl Robj {
         if self.obj_type != RobjType::String {
             panic!("This type cannot be converted to float")
         }
-        match self.encoding {
+        match self.encoding() {
             RobjEncoding::Int => Ok(self.integer() as f64),
             _ => {
                 match bytes_to_f64(self.string()) {
@@ -164,7 +165,7 @@ impl Robj {
         self.ptr = Box::new(bytes);
     }
 
-    pub fn dup_string_object(&self) -> RobjPtr {
+    pub fn _dup_string_object(&self) -> RobjPtr {
         let string = self.string();
         Self::create_bytes_object(string)
     }
@@ -392,7 +393,7 @@ impl Robj {
     }
 
     pub fn encoding(&self) -> RobjEncoding {
-        self.encoding
+        self.ptr.encoding()
     }
 
     pub fn object_type(&self) -> RobjType {
@@ -416,10 +417,10 @@ impl Robj {
     }
 
     pub fn list_push(&mut self, o: RobjPtr, w: ListWhere) {
-        match self.encoding {
+        match self.encoding() {
             RobjEncoding::ZipList => {
-                if self.list_can_update(&o) {
-                    self.list_update_push(o, w);
+                if self.list_can_upgrade(&o) {
+                    self.list_upgrade_push(o, w);
                     return;
                 }
                 let l = self.ptr.zip_list_mut();
@@ -444,7 +445,7 @@ impl Robj {
         }
     }
 
-    fn list_can_update(&self, o: &RobjPtr) -> bool {
+    fn list_can_upgrade(&self, o: &RobjPtr) -> bool {
         if (o.borrow().string_len() > (1 << 16)) ||
             (self.list_len() == 7) {
             return true;
@@ -452,8 +453,8 @@ impl Robj {
         false
     }
 
-    fn list_update_push(&mut self, o: RobjPtr, w: ListWhere) {
-        assert_eq!(self.encoding, RobjEncoding::ZipList);
+    fn list_upgrade_push(&mut self, o: RobjPtr, w: ListWhere) {
+        assert_eq!(self.encoding(), RobjEncoding::ZipList);
         let old_list = self.ptr.zip_list_ref();
         let mut new_list = Box::new(List::new());
         for v in old_list.iter_rev() {
@@ -473,7 +474,7 @@ impl Robj {
     }
 
     pub fn list_pop(&mut self, w: ListWhere) -> Option<RobjPtr> {
-        if self.encoding == RobjEncoding::ZipList {
+        if self.encoding() == RobjEncoding::ZipList {
             let l = self.ptr.zip_list_mut();
             let node = match w {
                 ListWhere::Head => l.front_mut(),
@@ -489,7 +490,7 @@ impl Robj {
             };
             node.delete();
             Some(ret)
-        } else if self.encoding == RobjEncoding::LinkedList {
+        } else if self.encoding() == RobjEncoding::LinkedList {
             let l = self.ptr.linked_list_mut();
             match w {
                 ListWhere::Head => l.pop_front(),
@@ -501,7 +502,7 @@ impl Robj {
     }
 
     pub fn list_len(&self) -> usize {
-        match self.encoding {
+        match self.encoding() {
             RobjEncoding::ZipList => self.ptr.zip_list_ref().len(),
             RobjEncoding::LinkedList => self.ptr.linked_list_ref().len(),
             _ => unreachable!(),
@@ -509,7 +510,7 @@ impl Robj {
     }
 
     pub fn list_index(&self, idx: usize) -> Option<RobjPtr> {
-        match self.encoding {
+        match self.encoding() {
             RobjEncoding::LinkedList => {
                 let l = self.ptr.linked_list_ref();
                 if l.len() <= idx {
@@ -536,7 +537,7 @@ impl Robj {
     }
 
     pub fn list_set(&mut self, idx: usize, o: RobjPtr) -> Result<(), ()> {
-        match self.encoding {
+        match self.encoding() {
             RobjEncoding::LinkedList => self.linked_list_set(idx, o),
             RobjEncoding::ZipList => self.zip_list_set(idx, o),
             _ => unreachable!()
@@ -573,7 +574,7 @@ impl Robj {
     }
 
     pub fn list_iter<'a>(&'a self) -> Box<dyn Iterator<Item=RobjPtr> + 'a> {
-        match self.encoding {
+        match self.encoding() {
             RobjEncoding::ZipList => {
                 let l = self.ptr.zip_list_ref();
                 Box::new(l.iter()
@@ -594,7 +595,7 @@ impl Robj {
     }
 
     pub fn list_trim(&mut self, start: usize, end: usize) {
-        match self.encoding {
+        match self.encoding() {
             RobjEncoding::ZipList => self.zip_list_trim(start, end),
             RobjEncoding::LinkedList => self.linked_list_trim(start, end),
             _ => unreachable!()
@@ -627,7 +628,7 @@ impl Robj {
     }
 
     pub fn list_del_n(&mut self, w: ListWhere, n: usize, o: &RobjPtr) -> usize {
-        match self.encoding {
+        match self.encoding() {
             RobjEncoding::ZipList => self.zip_list_del_n(w, n, o),
             RobjEncoding::LinkedList => self.linked_list_del_n(w, n, o),
             _ => unreachable!()
@@ -695,7 +696,7 @@ impl Robj {
     }
 
     pub fn set_add(&mut self, o: RobjPtr) -> Result<(), ()> {
-        match self.encoding {
+        match self.encoding() {
             RobjEncoding::Ht => {
                 let set = self.ptr.set_mut();
                 let o = if o.borrow().encoding == RobjEncoding::Int {
@@ -711,7 +712,7 @@ impl Robj {
                     let r = o.borrow().object_to_long();
                     match r {
                         Ok(n) => i = n,
-                        Err(_) => return self.set_update_add(o),
+                        Err(_) => return self.set_upgrade_add(o),
                     }
                 } else {
                     i = o.borrow().integer();
@@ -723,7 +724,7 @@ impl Robj {
         }
     }
 
-    fn set_update_add(&mut self, o: RobjPtr) -> Result<(), ()> {
+    fn set_upgrade_add(&mut self, o: RobjPtr) -> Result<(), ()> {
         let num: u64 = rand::thread_rng().gen();
         let old: &IntSet = self.ptr.int_set_ref();
         let mut s: Set = Dict::new(hash::string_object_hash, num);
@@ -775,6 +776,9 @@ impl ObjectData for Vec<u8> {
     fn raw_bytes(&self) -> &[u8] {
         self
     }
+    fn encoding(&self) -> RobjEncoding {
+        RobjEncoding::Raw
+    }
 }
 
 impl ObjectData for List {
@@ -783,6 +787,10 @@ impl ObjectData for List {
     }
     fn linked_list_mut(&mut self) -> &mut List {
         self
+    }
+
+    fn encoding(&self) -> RobjEncoding {
+        RobjEncoding::LinkedList
     }
 }
 
@@ -795,6 +803,10 @@ impl ObjectData for ZipList {
     }
     fn zip_list_mut(&mut self) -> &mut ZipList {
         self
+    }
+
+    fn encoding(&self) -> RobjEncoding {
+        RobjEncoding::ZipList
     }
 }
 
@@ -812,6 +824,10 @@ impl ObjectData for Set {
     }
     fn set_wrapper_mut(&mut self) -> &mut dyn SetWrapper {
         self
+    }
+
+    fn encoding(&self) -> RobjEncoding {
+        RobjEncoding::Ht
     }
 }
 
@@ -831,11 +847,19 @@ impl ObjectData for IntSet {
     fn set_wrapper_mut(&mut self) -> &mut dyn SetWrapper {
         self
     }
+
+    fn encoding(&self) -> RobjEncoding {
+        RobjEncoding::IntSet
+    }
 }
 
 impl ObjectData for Dict<RobjPtr, RobjPtr> {
     fn hash_table_ref(&self) -> &Dict<RobjPtr, RobjPtr> {
         self
+    }
+
+    fn encoding(&self) -> RobjEncoding {
+        RobjEncoding::Ht
     }
 }
 
@@ -843,11 +867,19 @@ impl ObjectData for Zset {
     fn zset_ref(&self) -> &Zset {
         self
     }
+
+    fn encoding(&self) -> RobjEncoding {
+        unimplemented!()
+    }
 }
 
 impl ObjectData for i64 {
     fn integer(&self) -> i64 {
         *self
+    }
+
+    fn encoding(&self) -> RobjEncoding {
+        RobjEncoding::Int
     }
 }
 
