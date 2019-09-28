@@ -36,6 +36,7 @@ pub struct Server {
     pub cron_loops: usize,
     pub last_save: SystemTime,
     pub used_memory: usize,
+    pub clean_rdb: bool,
 
     // for stats
     pub stat_start_time: SystemTime,
@@ -106,6 +107,7 @@ impl Server {
             cron_loops: 0,
             last_save: SystemTime::now(),
             used_memory: 0,
+            clean_rdb: false,
 
             stat_start_time: SystemTime::now(),
             stat_num_commands: 0,

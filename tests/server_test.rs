@@ -64,8 +64,10 @@ fn test_main() {
 
     // start running reredis server in a separated thread
     let handle: thread::JoinHandle<()> = thread::spawn(|| {
-        let config = Config::new();
+        let mut config = Config::new();
+        config.db_filename = "__temp_reredis_test_rdb_file.trdb".to_string();
         let mut env = Env::new(&config);
+        env.server.clean_rdb = true;
         env.init_server();
         if let Err(_) = env.create_first_file_event() {
             oom("creating file event");
@@ -242,6 +244,22 @@ fn test_simple_list_push_pop(_input: Box<dyn TestInputData>) -> TestResult {
 
     let ret: Option<String> = con.lindex("_list_simple_lpush", 100)?;
     let _ = is_nil(ret)?;
+    Ok(())
+}
+
+fn test_simple_lset(_input: Box<dyn TestInputData>) -> TestResult {
+    error!("ready to lset");
+    let mut con = establish()?;
+
+    let ret: i64 = con.rpush("_list_simple_lset", &["1", "2", "3", "4"])?;
+    let _ = compare_i64(4, ret)?;
+
+    let ret: String = con.lset("_list_simple_lset", 3, "5")?;
+    let _ = compare("OK".to_string(), ret)?;
+
+    let ret: String = con.lindex("_list_simple_lset", 3)?;
+    let _ = compare("5", ret)?;
+
     Ok(())
 }
 

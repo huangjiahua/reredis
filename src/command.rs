@@ -1368,6 +1368,9 @@ pub fn shutdown_command(
         Ok(_) => {
             warn!("{} bytes used at exit", crate::zalloc::allocated_memory());
             warn!("Server exit now, bye bye...");
+            if server.clean_rdb {
+                let _ = std::fs::remove_file(&server.db_filename);
+            }
             exit(0);
         }
         Err(_) => {
