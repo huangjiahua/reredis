@@ -1,8 +1,15 @@
 [package]
 name = "reredis"
-version = "0.1.0"
-authors = ["huangjiahua <jiahua.h at outlook dot com>"]
+version = "0.1.0-alpha.1"
+authors = ["huangjiahua <jiahua.h@outlook.com>"]
+description = """
+reredis is a reimplementation of Redis (server) in Rust programming language.
+"""
 edition = "2018"
+documentation = "https://github.com/huangjiahua/reredis"
+homepage = "https://github.com/huangjiahua/reredis"
+repository = "https://github.com/huangjiahua/reredis"
+license-file = "./LICENSE"
 
 [dependencies]
 murmurhash64 = "0.3.1"

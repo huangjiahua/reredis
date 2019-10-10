@@ -1,4 +1,5 @@
 /target
+/.ides/*
 **/*.rs.bk
 Cargo.lock
 *.rdb
