@@ -439,7 +439,7 @@ pub fn read_query_from_client(
         n_read = match socket.read(&mut client.query_buf[curr_len..]) {
             Ok(n) => n,
             Err(e) => {
-                if let ErrorKind::Interrupted = e.kind() {} else {
+                if let ErrorKind::WouldBlock = e.kind() {} else {
                     debug!("Reading from client: {}", e.description());
                     free_active_client(server, el, client.deref(), socket);
                 }
@@ -498,7 +498,7 @@ pub fn send_reply_to_client(
             _ => (stream.write_all(rep.string()), rep.string().len()),
         };
         match write_result {
-            Err(e) => if e.kind() != ErrorKind::Interrupted {
+            Err(e) => if e.kind() != ErrorKind::WouldBlock {
                 debug!("Error writing to client: {}", e.description());
                 free_client_occupied_in_el(server, el, data.unwrap_client(), stream, client.flags);
                 return;
