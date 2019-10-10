@@ -3,6 +3,7 @@
 reredis is a reimplementation of [Redis](https://redis.io/) (server) in Rust programming language. The current equivalent version of Redis is 1.x - 2.x. It supports Linux and MacOS(it depends on Unix API like fork, so Windows version is not available now).
 
 [![Build Status](https://dev.azure.com/jiahuah0077/jiahuah/_apis/build/status/huangjiahua.reredis?branchName=master)](https://dev.azure.com/jiahuah0077/jiahuah/_build/latest?definitionId=1&branchName=master)
+[![Crates.io](https://img.shields.io/crates/v/ripgrep.svg)](https://crates.io/crates/ripgrep)
 
 Licensed under BSD 3-Clause.
 

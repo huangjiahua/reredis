@@ -10,6 +10,7 @@ documentation = "https://github.com/huangjiahua/reredis"
 homepage = "https://github.com/huangjiahua/reredis"
 repository = "https://github.com/huangjiahua/reredis"
 license-file = "./LICENSE"
+readme = "./README.md"
 
 [dependencies]
 murmurhash64 = "0.3.1"
