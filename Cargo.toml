@@ -1,6 +1,6 @@
 [package]
 name = "reredis"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 authors = ["huangjiahua <jiahua.h@outlook.com>"]
 description = """
 reredis is a reimplementation of Redis (server) in Rust programming language.
