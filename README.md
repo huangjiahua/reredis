@@ -1,25 +1,141 @@
 # reredis
 
-Rewrite [redis by Salvatore Sanfilippo](https://github.com/antirez/redis) in [Rust](https://www.rust-lang.org).
-
-*huangjiahua*
+reredis is a reimplementation of [Redis](https://redis.io/) (server) in Rust programming language. The current equivalent version of Redis is 1.x - 2.x. It supports Linux and MacOS(it depends on Unix API like fork, so Windows version is not available now).
 
 [![Build Status](https://dev.azure.com/jiahuah0077/jiahuah/_apis/build/status/huangjiahua.reredis?branchName=master)](https://dev.azure.com/jiahuah0077/jiahuah/_build/latest?definitionId=1&branchName=master)
 
-It is now under developing. **Hoping someone can join me!**
+Licensed under BSD 3-Clause.
 
-## Try it?
+## Building reredis
 
-1. Persistant storage is supported now! 
+reredis can be compiled on all *nix systems that supports Rust toolchain(but tested only on Linux and MacOS).
 
-2. The supported commands are listed in the bottom of the file `src/command.rs`, you can refer to [Redis Commands](https://redis.io/commands/) to get the information of the commands.
+It requires Rust(>= 1.37.0) to compile. To install Rust, [see this](https://www.rust-lang.org/tools/install).
 
-3. You can use all sorts of clients(cli tool or SDK) to use reredis.
+The build command is
 
-4. How to build? 
-  1. Install rust toolchain ([guide](https://www.rust-lang.org/tools/install)). In short, just run `curl https://sh.rustup.rs -sSf | sh` in the terminal and add `$HOME/.cargo/bin/` to you PATH. The least version of Rust should be 1.37.0 stable. In fact, I build reredis using this version.
-  2. Change directory(cd) to the reredis project directory and run `cargo build`(you can run `cargo build --release` if you'd like the release version). If you just want to run reredis directly, run `cargo run`. 
-  3. After building, you can find the binaries at `target/debug/reredis` or `target/release/reredis` depending on your build type.
-  4. `./reredis`.
-  5. If you really want to use it to do some jobs(looks like you really like me or this project), change the address and port in the `src/server.rs` use it as you like.
-  
+```shell
+%cargo build --release
+```
+
+and the executable is located at  `./target/release/reredis`
+
+After building Redis, it is a good idea to test it using:
+
+```shell
+%cargo test  # This is unit tests
+```
+
+and
+
+```shell
+%cargo test --test server_test -- --ignored --nocapture # This is integration tests
+```
+
+Alternatively, you can use the Makefile, which is just a wrapper of the former commands.
+
+```shell
+%make
+```
+
+to build.
+
+```shell
+%make test
+```
+
+to do all tests.
+
+## How to use?
+
+The command is identical to Redis. Like
+
+```shell
+%reredis  # start on 127.0.0.1:6379
+```
+
+and
+
+```shell
+%reredis --bind 0.0.0.0 --port 9090 # binds on all ip address and port 9090
+```
+
+and
+
+```shell
+%reredis example.conf # configured by example.conf
+```
+
+Other supported configuration are listed [here](./example.conf)
+
+### Supported Commands
+
+The usage of the commands can be looked up [here](https://redis.io/commands).
+
+- get
+- set
+- setnx
+- del
+- exists
+- incr
+- decr
+- mget
+- rpush
+- lpush
+- lpop
+- rpop
+- llen
+- lindex
+- lset
+- lrange
+- ltrim
+- lrem
+- sadd
+- srem
+- smove
+- sismember
+- scard
+- spop
+- sinter
+- sinterstore
+- sunion
+- sunionstore
+- sdiff
+- sdiffstore
+- smembers
+- incrby
+- decrby
+- getset
+- randomkey
+- select
+- move
+- rename
+- renamenx
+- expire
+- keys
+- dbsize
+- auth
+- ping
+- echo
+- save
+- bgsave
+- shutdown
+- lastsave
+- type
+- sync
+- flushdb
+- flushall
+- sort
+- info
+- monitor
+- ttl
+- slaveof
+- object encoding
+
+## Relation with Redis
+
+reredis is a reimplementation of Redis, and its protocol is compatible with Redis Protocol([RESP](https://redis.io/topics/protocol)). But the current version of `.rdb` file is not compatible with Redis, because the format of `ziplist` and `intset` is slightly different. I'm still working on it. 
+
+## Clients
+
+Since the protocal is compatible with Redis. All clients of Redis can be used with reredis, like [redis-rs](https://github.com/mitsuhiko/redis-rs) in Rust. There is currently on implementation of `redis-cli` in my project, but I'm working on it. 
