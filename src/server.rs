@@ -21,6 +21,7 @@ use crate::util::*;
 use rand::prelude::*;
 use std::fs;
 use std::process::exit;
+use rlua::Lua;
 
 
 pub struct Server {
@@ -37,6 +38,8 @@ pub struct Server {
     pub last_save: SystemTime,
     pub used_memory: usize,
     pub clean_rdb: bool,
+
+    pub lua: Rc<RefCell<Lua>>,
 
     // for stats
     pub stat_start_time: SystemTime,
@@ -108,6 +111,8 @@ impl Server {
             last_save: SystemTime::now(),
             used_memory: 0,
             clean_rdb: false,
+
+            lua: Rc::new(RefCell::new(Lua::new())),
 
             stat_start_time: SystemTime::now(),
             stat_num_commands: 0,

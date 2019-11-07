@@ -21,6 +21,7 @@ log = "0.4.0"
 env_logger = "0.6.2"
 nix = "0.15.0"
 signal-hook = "0.1.10"
+rlua = "0.16.3"
 
 [dev-dependencies]
 threadpool = "1.7.1"

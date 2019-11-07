@@ -13,6 +13,7 @@ use std::time::{SystemTime, Duration};
 use crate::sort::*;
 use crate::rdb::*;
 use std::process::exit;
+use crate::lua::{to_lua, LuaRobj, RobjFromLua};
 
 
 type CommandProc = fn(
@@ -25,6 +26,7 @@ type CommandProc = fn(
 pub const CMD_BULK: i32 = 0b0001;
 pub const CMD_INLINE: i32 = 0b0010;
 pub const CMD_DENY_OOM: i32 = 0b0100;
+pub const CMD_LUA: i32 = 0b1000;
 
 pub struct Command {
     pub name: &'static str,
@@ -1644,6 +1646,70 @@ pub fn slaveof_command(
     client.add_reply(shared_object!(OK));
 }
 
+pub fn eval_command(
+    client: &mut Client,
+    server: &mut Server,
+    _el: &mut AeEventLoop,
+) {
+    unimplemented!();
+    let keys_len_obj = Rc::clone(&client.argv[1]);
+    let keys_len = match keys_len_obj.borrow().object_to_long() {
+        Ok(i) => {
+            if i < 0 {
+                client.add_str_reply("-ERR Number of keys can't be negative");
+                return;
+            }
+            i as usize
+        }
+        Err(_) => {
+            client.add_str_reply("-ERR value is not an integer or out of range");
+            return;
+        }
+    };
+
+    if keys_len > client.argc() - 2 {
+        client.add_str_reply("-ERR Number of keys can't be greater than number of args");
+        return;
+    }
+
+    let real_script = client.argv[1].borrow().string().to_vec();
+    let lua_keys: Vec<LuaRobj> = client.argv[2..(2 + keys_len)].iter().map(|x| {
+        to_lua(Rc::clone(x))
+    }).collect();
+    let lua_args: Vec<LuaRobj> = client.argv[(2 + keys_len)..].iter().map(|x| {
+        to_lua(Rc::clone(x))
+    }).collect();
+//    let mut lua_client = Client::with_fd()
+    let lua_state = Rc::clone(&server.lua);
+
+    let r = lua_state.borrow_mut().context(
+        move |ctx| -> Result<(), rlua::Error> {
+            let globals = ctx.globals();
+            globals.set("KEYS", lua_keys)?;
+            globals.set("ARGS", lua_args)?;
+
+            ctx.scope(|scp| -> Result<(), rlua::Error> {
+                let func = scp.create_function_mut(
+                    |_ctx, _t: rlua::Table| -> Result<Vec<LuaRobj>, rlua::Error> {
+                        Ok(vec![])
+                    })?;
+                let globals = ctx.globals();
+                globals.set("redis_call_internal", func)?;
+                ctx.load(&real_script).exec()?;
+                let globals = ctx.globals();
+                let _ret: RobjFromLua = globals.get("RET")?;
+                Ok(())
+            })?;
+            Ok(())
+        }
+    );
+
+    if let Err(_) = r {
+        client.add_str_reply("-ERR Lua error");
+        return;
+    }
+}
+
 pub fn ping_command(
     client: &mut Client,
     _server: &mut Server,
@@ -1770,48 +1836,48 @@ fn real_list_index(idx: i64, len: usize) -> i64 {
 }
 
 const CMD_TABLE: &[Command] = &[
-    Command { name: "get", proc: get_command, arity: 2, flags: CMD_INLINE },
-    Command { name: "set", proc: set_command, arity: 3, flags: CMD_INLINE | CMD_DENY_OOM },
-    Command { name: "setnx", proc: setnx_command, arity: 3, flags: CMD_INLINE | CMD_DENY_OOM },
-    Command { name: "del", proc: del_command, arity: -2, flags: CMD_INLINE },
-    Command { name: "exists", proc: exists_command, arity: 2, flags: CMD_INLINE },
-    Command { name: "incr", proc: incr_command, arity: 2, flags: CMD_INLINE | CMD_DENY_OOM },
-    Command { name: "decr", proc: decr_command, arity: 2, flags: CMD_INLINE | CMD_DENY_OOM },
-    Command { name: "mget", proc: mget_command, arity: -2, flags: CMD_INLINE },
-    Command { name: "rpush", proc: rpush_command, arity: -3, flags: CMD_INLINE | CMD_DENY_OOM },
-    Command { name: "lpush", proc: lpush_command, arity: -3, flags: CMD_INLINE | CMD_DENY_OOM },
-    Command { name: "lpop", proc: lpop_command, arity: 2, flags: CMD_INLINE },
-    Command { name: "rpop", proc: rpop_command, arity: 2, flags: CMD_INLINE },
-    Command { name: "llen", proc: llen_command, arity: 2, flags: CMD_INLINE },
-    Command { name: "lindex", proc: lindex_command, arity: 3, flags: CMD_INLINE },
-    Command { name: "lset", proc: lset_command, arity: 4, flags: CMD_INLINE | CMD_DENY_OOM },
-    Command { name: "lrange", proc: lrange_command, arity: 4, flags: CMD_INLINE },
-    Command { name: "ltrim", proc: ltrim_command, arity: 4, flags: CMD_INLINE },
-    Command { name: "lrem", proc: lrem_command, arity: 4, flags: CMD_INLINE },
-    Command { name: "sadd", proc: sadd_command, arity: -3, flags: CMD_INLINE | CMD_DENY_OOM },
-    Command { name: "srem", proc: srem_command, arity: -3, flags: CMD_INLINE },
-    Command { name: "smove", proc: smove_command, arity: 4, flags: CMD_INLINE },
-    Command { name: "sismember", proc: sismember_command, arity: 3, flags: CMD_INLINE },
-    Command { name: "scard", proc: scard_command, arity: 2, flags: CMD_INLINE },
-    Command { name: "spop", proc: spop_command, arity: 2, flags: CMD_INLINE },
-    Command { name: "sinter", proc: sinter_command, arity: -2, flags: CMD_INLINE | CMD_DENY_OOM },
-    Command { name: "sinterstore", proc: sinterstore_command, arity: -3, flags: CMD_INLINE | CMD_DENY_OOM },
-    Command { name: "sunion", proc: sunion_command, arity: -2, flags: CMD_INLINE | CMD_DENY_OOM },
-    Command { name: "sunionstore", proc: sunionstore_command, arity: -3, flags: CMD_INLINE | CMD_DENY_OOM },
-    Command { name: "sdiff", proc: sdiff_command, arity: -2, flags: CMD_INLINE | CMD_DENY_OOM },
-    Command { name: "sdiffstore", proc: sdiffstore_command, arity: -3, flags: CMD_INLINE | CMD_DENY_OOM },
-    Command { name: "smembers", proc: smembers_command, arity: 2, flags: CMD_INLINE },
-    Command { name: "incrby", proc: incr_by_command, arity: 3, flags: CMD_INLINE | CMD_DENY_OOM },
-    Command { name: "decrby", proc: decr_by_command, arity: 3, flags: CMD_INLINE | CMD_DENY_OOM },
-    Command { name: "getset", proc: get_set_command, arity: 3, flags: CMD_INLINE | CMD_DENY_OOM },
-    Command { name: "randomkey", proc: randomkey_command, arity: 1, flags: CMD_INLINE },
-    Command { name: "select", proc: select_command, arity: 2, flags: CMD_INLINE },
-    Command { name: "move", proc: move_command, arity: 3, flags: CMD_INLINE },
-    Command { name: "rename", proc: rename_command, arity: 3, flags: CMD_INLINE },
+    Command { name: "get", proc: get_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "set", proc: set_command, arity: 3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
+    Command { name: "setnx", proc: setnx_command, arity: 3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
+    Command { name: "del", proc: del_command, arity: -2, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "exists", proc: exists_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "incr", proc: incr_command, arity: 2, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
+    Command { name: "decr", proc: decr_command, arity: 2, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
+    Command { name: "mget", proc: mget_command, arity: -2, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "rpush", proc: rpush_command, arity: -3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
+    Command { name: "lpush", proc: lpush_command, arity: -3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
+    Command { name: "lpop", proc: lpop_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "rpop", proc: rpop_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "llen", proc: llen_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "lindex", proc: lindex_command, arity: 3, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "lset", proc: lset_command, arity: 4, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
+    Command { name: "lrange", proc: lrange_command, arity: 4, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "ltrim", proc: ltrim_command, arity: 4, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "lrem", proc: lrem_command, arity: 4, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "sadd", proc: sadd_command, arity: -3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
+    Command { name: "srem", proc: srem_command, arity: -3, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "smove", proc: smove_command, arity: 4, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "sismember", proc: sismember_command, arity: 3, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "scard", proc: scard_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "spop", proc: spop_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "sinter", proc: sinter_command, arity: -2, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
+    Command { name: "sinterstore", proc: sinterstore_command, arity: -3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
+    Command { name: "sunion", proc: sunion_command, arity: -2, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
+    Command { name: "sunionstore", proc: sunionstore_command, arity: -3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
+    Command { name: "sdiff", proc: sdiff_command, arity: -2, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
+    Command { name: "sdiffstore", proc: sdiffstore_command, arity: -3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
+    Command { name: "smembers", proc: smembers_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "incrby", proc: incr_by_command, arity: 3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
+    Command { name: "decrby", proc: decr_by_command, arity: 3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
+    Command { name: "getset", proc: get_set_command, arity: 3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
+    Command { name: "randomkey", proc: randomkey_command, arity: 1, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "select", proc: select_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "move", proc: move_command, arity: 3, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "rename", proc: rename_command, arity: 3, flags: CMD_INLINE | CMD_LUA },
     Command { name: "renamenx", proc: renamenx_command, arity: 3, flags: CMD_INLINE },
-    Command { name: "expire", proc: expire_command, arity: 3, flags: CMD_INLINE },
-    Command { name: "keys", proc: keys_command, arity: 2, flags: CMD_INLINE },
-    Command { name: "dbsize", proc: dbsize_command, arity: 1, flags: CMD_INLINE },
+    Command { name: "expire", proc: expire_command, arity: 3, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "keys", proc: keys_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
+    Command { name: "dbsize", proc: dbsize_command, arity: 1, flags: CMD_INLINE | CMD_LUA },
     Command { name: "auth", proc: auth_command, arity: 2, flags: CMD_INLINE },
     Command { name: "ping", proc: ping_command, arity: 1, flags: CMD_INLINE },
     Command { name: "echo", proc: echo_command, arity: 2, flags: CMD_INLINE },
@@ -1819,16 +1885,17 @@ const CMD_TABLE: &[Command] = &[
     Command { name: "bgsave", proc: bgsave_command, arity: 1, flags: CMD_INLINE },
     Command { name: "shutdown", proc: shutdown_command, arity: 1, flags: CMD_INLINE },
     Command { name: "lastsave", proc: lastsave_command, arity: 1, flags: CMD_INLINE },
-    Command { name: "type", proc: type_command, arity: 2, flags: CMD_INLINE },
+    Command { name: "type", proc: type_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
     Command { name: "sync", proc: sync_command, arity: 1, flags: CMD_INLINE },
     Command { name: "flushdb", proc: flushdb_command, arity: 1, flags: CMD_INLINE },
     Command { name: "flushall", proc: flushall_command, arity: 1, flags: CMD_INLINE },
-    Command { name: "sort", proc: sort_command, arity: -2, flags: CMD_INLINE | CMD_DENY_OOM },
+    Command { name: "sort", proc: sort_command, arity: -2, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
     Command { name: "info", proc: info_command, arity: 1, flags: CMD_INLINE },
     Command { name: "monitor", proc: monitor_command, arity: 1, flags: CMD_INLINE },
-    Command { name: "ttl", proc: ttl_command, arity: 2, flags: CMD_INLINE },
+    Command { name: "ttl", proc: ttl_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
     Command { name: "slaveof", proc: slaveof_command, arity: 3, flags: CMD_INLINE },
-    Command { name: "object", proc: object_command, arity: -2, flags: CMD_INLINE },
+    Command { name: "eval", proc: eval_command, arity: -2, flags: CMD_INLINE | CMD_DENY_OOM },
+    Command { name: "object", proc: object_command, arity: -2, flags: CMD_INLINE | CMD_LUA },
     Command { name: "command", proc: command_command, arity: 1, flags: CMD_INLINE },
 ];
 
