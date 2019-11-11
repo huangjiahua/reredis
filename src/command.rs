@@ -2,7 +2,7 @@ use std::mem::swap;
 use std::rc::Rc;
 use crate::client::{Client, CLIENT_SLAVE, CLIENT_MONITOR, ReplyState};
 use crate::server::Server;
-use crate::ae::AeEventLoop;
+use crate::ae::{AeEventLoop, Fdp};
 use crate::shared::{OK, ERR, NULL_BULK, CRLF, CZERO, CONE, COLON, WRONG_TYPE, PONG, EMPTY_MULTI_BULK};
 use crate::util::*;
 use crate::object::{Robj, RobjPtr, RobjEncoding, RobjType};
@@ -14,6 +14,7 @@ use crate::sort::*;
 use crate::rdb::*;
 use std::process::exit;
 use crate::lua::{to_lua, LuaRobj, RobjFromLua};
+use std::cell::RefCell;
 
 
 type CommandProc = fn(
@@ -1679,7 +1680,8 @@ pub fn eval_command(
     let lua_args: Vec<LuaRobj> = client.argv[(2 + keys_len)..].iter().map(|x| {
         to_lua(Rc::clone(x))
     }).collect();
-//    let mut lua_client = Client::with_fd()
+    let mut lua_client =
+        Client::with_fd(Rc::new(RefCell::new(Fdp::Nil)));
     let lua_state = Rc::clone(&server.lua);
 
     let r = lua_state.borrow_mut().context(
@@ -1690,7 +1692,12 @@ pub fn eval_command(
 
             ctx.scope(|scp| -> Result<(), rlua::Error> {
                 let func = scp.create_function_mut(
-                    |_ctx, _t: rlua::Table| -> Result<Vec<LuaRobj>, rlua::Error> {
+                    |_ctx, t: rlua::Table| -> Result<Vec<LuaRobj>, rlua::Error> {
+                        let len = t.len()?;
+                        for i in 0..len {
+                            let arg: LuaRobj = t.get(i)?;
+                            // TODO
+                        }
                         Ok(vec![])
                     })?;
                 let globals = ctx.globals();

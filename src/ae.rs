@@ -18,6 +18,7 @@ pub type Fd = Rc<RefCell<Fdp>>;
 pub enum Fdp {
     Listener(TcpListener),
     Stream(TcpStream),
+    Nil,
 }
 
 impl Fdp {
@@ -39,6 +40,7 @@ impl Fdp {
         match self {
             Fdp::Stream(s) => s,
             Fdp::Listener(l) => l,
+            _ => panic!("cannot make Nil to evented"),
         }
     }
 
