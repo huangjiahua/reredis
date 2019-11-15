@@ -1650,9 +1650,8 @@ pub fn slaveof_command(
 pub fn eval_command(
     client: &mut Client,
     server: &mut Server,
-    _el: &mut AeEventLoop,
+    el: &mut AeEventLoop,
 ) {
-    unimplemented!();
     let keys_len_obj = Rc::clone(&client.argv[1]);
     let keys_len = match keys_len_obj.borrow().object_to_long() {
         Ok(i) => {
@@ -1680,7 +1679,7 @@ pub fn eval_command(
     let lua_args: Vec<LuaRobj> = client.argv[(2 + keys_len)..].iter().map(|x| {
         to_lua(Rc::clone(x))
     }).collect();
-    let mut lua_client =
+    let lua_client =
         Client::with_fd(Rc::new(RefCell::new(Fdp::Nil)));
     let lua_state = Rc::clone(&server.lua);
 
@@ -1692,12 +1691,23 @@ pub fn eval_command(
 
             ctx.scope(|scp| -> Result<(), rlua::Error> {
                 let func = scp.create_function_mut(
-                    |_ctx, t: rlua::Table| -> Result<Vec<LuaRobj>, rlua::Error> {
+                    |ctx, t: rlua::Table| -> Result<Vec<LuaRobj>, rlua::Error> {
                         let len = t.len()?;
                         for i in 0..len {
-                            let arg: LuaRobj = t.get(i)?;
-                            // TODO
+                            let arg: RobjFromLua = t.get(i)?;
+                            match arg {
+                                RobjFromLua::Nil => continue,
+                                RobjFromLua::Robj(obj) => {
+                                    lua_client.borrow_mut().argv.push(obj.clone());
+                                    debug!("{}", std::str::from_utf8(obj.borrow().string()).unwrap());
+                                }
+                                _ => {}
+                            }
                         }
+                        lua_client.borrow_mut().process_input_buffer(server, el);
+                        let back_to_lua = lua_client.borrow_mut().parse_reply_to_lua();
+                        let globals = ctx.globals();
+                        globals.set("RETURN_FROM_RUST", back_to_lua)?;
                         Ok(vec![])
                     })?;
                 let globals = ctx.globals();

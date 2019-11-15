@@ -1,6 +1,7 @@
 use crate::object::{RobjPtr, Robj};
 use rlua::{ToLua, Context, Value, Error, FromLua};
 use std::ffi::CString;
+use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct LuaRobj(RobjPtr);
@@ -45,7 +46,7 @@ impl<'lua> FromLua<'lua> for RobjFromLua {
     fn from_lua(lua_value: Value<'lua>, _lua: Context<'lua>) -> Result<Self, Error> {
         match lua_value {
             Value::Nil => Ok(Self::Nil),
-            Value::Integer(n) => Ok(Self::Robj(Robj::create_int_object(n))),
+            Value::Integer(n) => Ok(Self::Robj(Robj::create_string_object_from_long(n))),
             Value::Number(n) =>
                 Ok(Self::Robj(Robj::create_string_object_from_double(n))),
             Value::String(s) =>
@@ -61,5 +62,43 @@ impl<'lua> FromLua<'lua> for RobjFromLua {
             }
             _ => panic!("Unknown lua type")
         }
+    }
+}
+
+pub enum LuaRedis {
+    Integer(i64),
+    Bulk(String),
+    MultiBulk(Vec<String>),
+    Status(String),
+    Error(String),
+    Nil,
+}
+
+impl<'lua> ToLua<'lua> for LuaRedis {
+    fn to_lua(self, lua: Context<'lua>) -> Result<Value<'lua>, Error> {
+        match self {
+            Self::Integer(i) => i.to_lua(lua),
+            Self::Bulk(s) => s.to_lua(lua),
+            Self::MultiBulk(v) => v.to_lua(lua),
+            Self::Status(s) => {
+                let mut map: HashMap<String, String> = HashMap::new();
+                map.insert("ok".to_string(), s).unwrap();
+                map.to_lua(lua)
+            }
+            Self::Error(s) => {
+                let mut map: HashMap<String, String> = HashMap::new();
+                map.insert("ok".to_string(), s).unwrap();
+                map.to_lua(lua)
+            }
+            Self::Nil => {
+                false.to_lua(lua)
+            }
+        }
+    }
+}
+
+impl<'lua> FromLua<'lua> for LuaRedis {
+    fn from_lua(lua_value: Value<'lua>, lua: Context<'lua>) -> Result<Self, Error> {
+        unimplemented!()
     }
 }
