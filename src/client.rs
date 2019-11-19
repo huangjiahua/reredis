@@ -12,7 +12,7 @@ use crate::zalloc;
 use crate::replicate;
 use std::fs::File;
 use mio::Token;
-use crate::lua::LuaRobj;
+use crate::lua::LuaRedis;
 
 pub const CLIENT_CLOSE: i32 = 0b0001;
 pub const CLIENT_SLAVE: i32 = 0b0010;
@@ -466,8 +466,10 @@ impl Client {
         self.reply.push(Robj::from_bytes(glued));
     }
 
-    pub fn parse_reply_to_lua(&mut self) -> LuaRobj {
-        unimplemented!()
+    pub fn parse_reply_to_lua(&mut self) -> LuaRedis {
+        let ret = LuaRedis::new(&self.reply);
+        self.reply.clear();
+        ret
     }
 
     pub fn is_slave(&self) -> bool {

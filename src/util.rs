@@ -138,6 +138,29 @@ pub fn to_system_time(timestamp: u64) -> SystemTime {
     SystemTime::UNIX_EPOCH + Duration::from_millis(timestamp)
 }
 
+fn reply_preceding_to_int(bytes: &[u8]) -> i64 {
+    let content = &bytes[1..bytes.len() - 2];
+    bytes_to_i64(content).unwrap()
+}
+
+pub fn int_reply_to_int(bytes: &[u8]) -> i64 {
+    assert!(bytes.len() > 3);
+    assert_eq!(bytes[0], b':');
+    reply_preceding_to_int(bytes)
+}
+
+pub fn bulk_reply_to_int(bytes: &[u8]) -> i64 {
+    assert!(bytes.len() > 3);
+    assert_eq!(bytes[0], b'$');
+    reply_preceding_to_int(bytes)
+}
+
+pub fn multi_bulk_reply_to_int(bytes: &[u8]) -> i64 {
+    assert!(bytes.len() > 3);
+    assert_eq!(bytes[0], b'*');
+    reply_preceding_to_int(bytes)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -158,5 +181,12 @@ mod test {
         assert!(is_prefix_of("--", "--good"));
         assert!(is_prefix_of("--", "--"));
         assert!(!is_prefix_of("--", "dm"));
+    }
+
+    #[test]
+    fn test_integer_reply_to_integer() {
+        assert_eq!(int_reply_to_int(b":1\r\n"), 1);
+        assert_eq!(int_reply_to_int(b":1000\r\n"), 1000);
+        assert_eq!(int_reply_to_int(b":-1000\r\n"), -1000);
     }
 }

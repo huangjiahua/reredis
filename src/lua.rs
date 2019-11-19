@@ -2,6 +2,7 @@ use crate::object::{RobjPtr, Robj};
 use rlua::{ToLua, Context, Value, Error, FromLua};
 use std::ffi::CString;
 use std::collections::HashMap;
+use crate::util::{int_reply_to_int, bulk_reply_to_int, multi_bulk_reply_to_int};
 
 #[derive(Clone)]
 pub struct LuaRobj(RobjPtr);
@@ -67,11 +68,50 @@ impl<'lua> FromLua<'lua> for RobjFromLua {
 
 pub enum LuaRedis {
     Integer(i64),
-    Bulk(String),
-    MultiBulk(Vec<String>),
-    Status(String),
-    Error(String),
+    Bulk(CString),
+    MultiBulk(Vec<LuaRedis>),
+    Status(CString),
+    Error(CString),
     Nil,
+}
+
+impl LuaRedis {
+    pub fn new(reply: &[RobjPtr]) -> Self {
+        let first = reply[0].borrow().string().to_vec();
+        if first[0] == b'+' {
+            return Self::Status(CString::new(first[1..first.len() - 2].to_vec()).unwrap());
+        }
+        if first[0] == b'-' {
+            return Self::Error(CString::new(first[1..first.len() - 2].to_vec()).unwrap());
+        }
+        if first[0] == b'$' {
+            assert!(reply.len() > 1);
+            if bulk_reply_to_int(&first) == -1 {
+                return Self::Nil;
+            }
+            return Self::Bulk(CString::new(reply[1].borrow().string().to_vec()).unwrap());
+        }
+        if first[0] == b':' {
+            return Self::Integer(int_reply_to_int(&first));
+        }
+        if first[0] == b'*' {
+            if multi_bulk_reply_to_int(&first) == -1 {
+                return Self::Nil;
+            }
+            let mut v = vec![];
+            let mut i = 1;
+            while i < reply.len() {
+                let o = LuaRedis::new(&reply[i..]);
+                v.push(o);
+                if reply[i].borrow().string()[0] == b'$' {
+                    i += 2;
+                }
+                i += 1;
+            }
+            return LuaRedis::MultiBulk(v);
+        }
+        LuaRedis::Nil
+    }
 }
 
 impl<'lua> ToLua<'lua> for LuaRedis {
@@ -81,12 +121,12 @@ impl<'lua> ToLua<'lua> for LuaRedis {
             Self::Bulk(s) => s.to_lua(lua),
             Self::MultiBulk(v) => v.to_lua(lua),
             Self::Status(s) => {
-                let mut map: HashMap<String, String> = HashMap::new();
+                let mut map: HashMap<String, CString> = HashMap::new();
                 map.insert("ok".to_string(), s).unwrap();
                 map.to_lua(lua)
             }
             Self::Error(s) => {
-                let mut map: HashMap<String, String> = HashMap::new();
+                let mut map: HashMap<String, CString> = HashMap::new();
                 map.insert("ok".to_string(), s).unwrap();
                 map.to_lua(lua)
             }
@@ -98,7 +138,69 @@ impl<'lua> ToLua<'lua> for LuaRedis {
 }
 
 impl<'lua> FromLua<'lua> for LuaRedis {
-    fn from_lua(lua_value: Value<'lua>, lua: Context<'lua>) -> Result<Self, Error> {
-        unimplemented!()
+    fn from_lua(lua_value: Value<'lua>, _lua: Context<'lua>) -> Result<Self, Error> {
+        let r = match lua_value {
+            Value::Integer(i) => LuaRedis::Integer(i),
+            Value::Number(n) => LuaRedis::Integer(n as i64),
+            Value::Table(t) => {
+                if t.contains_key("ok")? {
+                    let status: CString = t.get("ok")?;
+                    LuaRedis::Status(status)
+                } else if t.contains_key("err")? {
+                    let error: CString = t.get("err")?;
+                    LuaRedis::Error(error)
+                } else {
+                    let len = t.len()?;
+                    let mut v = Vec::with_capacity(len as usize);
+                    for i in 1..len + 1 {
+                        let val: LuaRedis = t.get(i)?;
+                        v.push(val);
+                    }
+                    LuaRedis::MultiBulk(v)
+                }
+            }
+            Value::Nil => LuaRedis::Nil,
+            Value::Boolean(b) => {
+                if b {
+                    LuaRedis::Integer(1)
+                } else {
+                    LuaRedis::Nil
+                }
+            }
+            Value::Error(e) => {
+                return Err(e);
+            }
+            _ => unreachable!(),
+        };
+        Ok(r)
     }
 }
+
+const BOILERPLATE_BEGIN: &[u8] = br#"
+redis = {}
+redis.call = function(...)
+    local args = {...}
+    redis_call_internal(args)
+    local ret = RETURN_FROM_RUST
+    RETURN_FROM_RUST = nil
+    return ret
+end
+
+function eval_outer()
+--user code begin
+"#;
+
+const BOILERPLATE_END: &[u8] = br#"
+--user code end
+end
+
+-- defined in scope end
+
+-- running code begin
+BACK_TO_RUST = eval_outer()
+if BACK_TO_RUST ~= nil then
+    print(BACK_TO_RUST)
+end
+-- running code en
+"#;
+
