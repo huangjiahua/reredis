@@ -12,6 +12,10 @@ repository = "https://github.com/huangjiahua/reredis"
 license-file = "./LICENSE"
 readme = "./README.md"
 
+[[bin]]
+name = "reredis-async"
+path = "src/async/main.rs"
+
 [dependencies]
 murmurhash64 = "0.3.1"
 rand = "0.7.0"
