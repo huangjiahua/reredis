@@ -74,7 +74,7 @@ impl Server {
     pub fn new(config: &Config) -> Server {
         let addr: SocketAddr = format!("{}:{}", config.bind_addr, config.port).parse().unwrap();
         let server = TcpListener::bind(&addr).unwrap_or_else(|e| {
-            eprintln!("Error bind address {:?}: {}", addr, e.description());
+            eprintln!("Error bind address {:?}: {}", addr, e);
             exit(1);
         });
         let fd = Rc::new(RefCell::new(Fdp::Listener(server)));
@@ -336,7 +336,7 @@ impl Server {
                 warn!("Server exit now, bye bye...");
             }
             Err(e) => {
-                warn!("Error trying to save the DB: {}", e.description());
+                warn!("Error trying to save the DB: {}", e);
             }
         }
     }
@@ -355,20 +355,20 @@ impl Server {
 
         // sync write
         socket.write_all(b"SYNC\r\n").map_err(|e| {
-            warn!("I/O error writing to MASTER: {}", e.description());
+            warn!("I/O error writing to MASTER: {}", e);
             e
         })?;
 
         //sync read
         let mut reader = BufReader::new(socket);
         reader.read_line(&mut line_buf).map_err(|e| {
-            warn!("I/O reading bulk count from MASTER: {}", e.description());
+            warn!("I/O reading bulk count from MASTER: {}", e);
             e
         })?;
         let line_buf = line_buf.trim();
         let mut dump_size =
             bytes_to_usize(&line_buf.as_bytes()[1..]).map_err(|e| {
-                warn!("Error parsing dump size: {}", e.description());
+                warn!("Error parsing dump size: {}", e);
                 e
             })?;
         info!("Receiving {} bytes data dump from MASTER", dump_size);
@@ -386,19 +386,19 @@ impl Server {
                 .open(&temp_file)
                 .map_err(|e| {
                     warn!("Opening the temp file needed for MASTER <-> SLAVE synchronization: {}",
-                          e.description());
+                          e);
                     e
                 })?;
 
             while dump_size > 0 {
                 let buf = &mut buf[..std::cmp::min(1024, dump_size)];
                 reader.read_exact(buf).map_err(|e| {
-                    warn!("I/O error trying to sync with MASTER: {}", e.description());
+                    warn!("I/O error trying to sync with MASTER: {}", e);
                     e
                 })?;
                 file.write_all(buf).map_err(|e| {
                     warn!("Write error writing to the DB dump file needed for MASTER <-> \
-                       SLAVE synchronization: {}", e.description());
+                       SLAVE synchronization: {}", e);
                     e
                 })?;
                 dump_size -= buf.len();
@@ -407,7 +407,7 @@ impl Server {
 
         fs::rename(&temp_file, &self.db_filename).map_err(|e| {
             warn!("Failed trying to rename the temp DB into dump.rdb \
-                   in MASTER <-> SLAVE synchronization: {}", e.description());
+                   in MASTER <-> SLAVE synchronization: {}", e);
             let _ = fs::remove_file(&temp_file);
             e
         })?;
@@ -420,7 +420,7 @@ impl Server {
 
         let socket = reader.into_inner();
         let socket = net::TcpStream::from_stream(socket).map_err(|e| {
-            warn!("Error reconnecting to master: {}", e.description());
+            warn!("Error reconnecting to master: {}", e);
             e
         })?;
         let fd = Rc::new(RefCell::new(Fdp::Stream(socket)));

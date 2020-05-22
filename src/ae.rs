@@ -422,7 +422,7 @@ impl AeEventLoop {
         while !self.stop {
             let r = self.process_events(AE_ALL_EVENTS, server);
             if let Err(e) = r {
-                debug!("Processing events: {}", e.description());
+                debug!("Processing events: {}", e);
             }
             if server.shutdown_asap.load(Ordering::SeqCst) {
                 warn!("Received SIGTERM or SIGINT, scheduling shutdown...");

@@ -1,5 +1,4 @@
 use crate::server::Server;
-use std::error::Error;
 use crate::ae::{AE_READABLE, default_ae_event_finalizer_proc, AeEventLoop, Fd, Fdp, AE_WRITABLE};
 use std::rc::Rc;
 use chrono::Local;
@@ -102,13 +101,13 @@ impl Config {
         if filename != "-" {
             let mut file = File::open(filename).unwrap_or_else(|e| {
                 eprintln!("Fatal error, can't open config file {}: {}",
-                          filename, e.description());
+                          filename, &e.to_string());
                 exit(1);
             });
 
             file.read_to_string(&mut contents).unwrap_or_else(|e| {
                 eprintln!("Fatal error, can't read config file {}: {}",
-                          filename, e.description());
+                          filename, &e.to_string());
                 exit(1);
             });
         } else {
@@ -117,7 +116,7 @@ impl Config {
 
             handle.read_to_string(&mut contents).unwrap_or_else(|e| {
                 eprintln!("Fatal error, can't read config from stdin: {}",
-                          e.description());
+                          &e.to_string());
                 exit(1);
             });
         }
@@ -150,13 +149,13 @@ impl Config {
             match (&main[..], argc) {
                 ("timeout", 2) => {
                     self.max_idle_time = parse_usize(argv[1]).unwrap_or_else(|e| {
-                        Self::load_error(i, line, e.description());
+                        Self::load_error(i, line, &e.to_string());
                         0
                     });
                 }
                 ("port", 2) => {
                     self.port = parse_port(argv[1]).unwrap_or_else(|e| {
-                        Self::load_error(i, line, e.description());
+                        Self::load_error(i, line, &e.to_string());
                         0
                     });
                 }
@@ -166,14 +165,14 @@ impl Config {
                 ("save", 3) => {
                     let pair =
                         parse_usize_pair(argv[1], argv[2]).unwrap_or_else(|e| {
-                            Self::load_error(i, line, e.description());
+                            Self::load_error(i, line, &e.to_string());
                             (0, 0)
                         });
                     self.save_params.push(pair);
                 }
                 ("dir", 2) => {
                     set_current_dir(argv[1]).unwrap_or_else(|e| {
-                        eprint!("Can't change dir to {}: {}", argv[1], e.description());
+                        eprint!("Can't change dir to {}: {}", argv[1], e);
                         exit(1);
                     });
                 }
@@ -196,7 +195,7 @@ impl Config {
                     if let Some(f) = self.log_file.as_ref() {
                         let ok = File::open(f);
                         if let Err(e) = ok {
-                            Self::load_error(i, line, e.description());
+                            Self::load_error(i, line, &e.to_string());
                         }
                     }
                 }
@@ -209,7 +208,7 @@ impl Config {
                 }
                 ("maxclients", 2) => {
                     self.max_clients = parse_usize(argv[1]).unwrap_or_else(|e| {
-                        Self::load_error(i, line, e.description());
+                        Self::load_error(i, line, &e.to_string());
                         0
                     });
                 }
@@ -224,7 +223,7 @@ impl Config {
                 ("slaveof", 3) => {
                     self.master_host = Some(argv[1].to_string());
                     self.master_port = parse_port(argv[2]).unwrap_or_else(|e| {
-                        Self::load_error(i, line, e.description());
+                        Self::load_error(i, line, &e.to_string());
                         0
                     });
                 }
@@ -298,7 +297,7 @@ impl Env {
             if let ErrorKind::NotFound = e.kind() {
                 return Err(());
             }
-            warn!("{}", e.description());
+            warn!("{}", e);
             exit(1);
         }
         Ok(())
@@ -361,7 +360,7 @@ pub fn accept_handler(
     let (stream, info) = match r {
         Ok(p) => p,
         Err(e) => {
-            debug!("Accepting client connection: {}", e.description());
+            debug!("Accepting client connection: {}", e);
             return;
         }
     };
@@ -440,7 +439,7 @@ pub fn read_query_from_client(
             Ok(n) => n,
             Err(e) => {
                 if let ErrorKind::WouldBlock = e.kind() {} else {
-                    debug!("Reading from client: {}", e.description());
+                    debug!("Reading from client: {}", e);
                     free_active_client(server, el, client.deref(), socket);
                 }
                 return;
@@ -499,7 +498,7 @@ pub fn send_reply_to_client(
         };
         match write_result {
             Err(e) => if e.kind() != ErrorKind::WouldBlock {
-                debug!("Error writing to client: {}", e.description());
+                debug!("Error writing to client: {}", e);
                 free_client_occupied_in_el(server, el, data.unwrap_client(), stream, client.flags);
                 return;
             }
@@ -545,7 +544,7 @@ pub fn send_bulk_to_slave(
 
         let file = slave.reply_db_file.as_mut().unwrap();
         if let Err(e) = file.seek(SeekFrom::Start(0)) {
-            warn!("Seek Error sending DB to slave: {}", e.description());
+            warn!("Seek Error sending DB to slave: {}", e);
             free_client_occupied_in_el(server, el, client_ptr, stream, flags);
         }
         buf_len = match file.read(&mut buf) {
@@ -555,7 +554,7 @@ pub fn send_bulk_to_slave(
                 return;
             }
             Err(e) => {
-                warn!("Read error sending DB to slave: {}", e.description());
+                warn!("Read error sending DB to slave: {}", e);
                 free_client_occupied_in_el(server, el, client_ptr, stream, flags);
                 return;
             }
@@ -564,7 +563,7 @@ pub fn send_bulk_to_slave(
             }
         };
         if let Err(e) = stream.write_all(&buf[..buf_len]) {
-            warn!("Write error sending DB to slave: {}", e.description());
+            warn!("Write error sending DB to slave: {}", e);
             free_client_occupied_in_el(server, el, client_ptr, stream, flags);
             return;
         }

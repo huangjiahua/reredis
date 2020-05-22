@@ -15,7 +15,6 @@ use std::os::unix::io::AsRawFd;
 use nix::unistd::{fork, ForkResult, Pid};
 use nix::sys::ptrace::kill;
 use std::process::exit;
-use std::error::Error;
 
 const RDB_DB_SELECT_FLAG: u8 = 0xFE;
 const RDB_DB_END_FLAG: u8 = 0xFF;
@@ -67,7 +66,7 @@ pub fn rdb_save_in_background(server: &mut Server) -> Result<(), ()> {
             }
         }
         Err(e) => {
-            warn!("Can't save in background: fork: {}", e.description());
+            warn!("Can't save in background: fork: {}", e);
             return Err(());
         }
     }

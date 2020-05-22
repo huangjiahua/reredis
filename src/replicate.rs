@@ -7,7 +7,6 @@ use crate::shared::CRLF;
 use crate::server::Server;
 use crate::ae::{AeEventLoop, AE_WRITABLE, AE_READABLE};
 use std::fs::File;
-use std::error::Error;
 use crate::env::{send_bulk_to_slave, send_reply_to_client};
 use crate::rdb::rdb_save_in_background;
 
@@ -99,7 +98,7 @@ pub fn update_slaves_waiting_bgsave(server: &mut Server, el: &mut AeEventLoop, o
                     Ok(f) => f,
                     Err(err) => {
                         warn!("SYNC failed. Can't open/stat DB after BGSAVE: {}",
-                              err.description());
+                              err);
                         continue;
                     }
                 };
@@ -107,7 +106,7 @@ pub fn update_slaves_waiting_bgsave(server: &mut Server, el: &mut AeEventLoop, o
                     Ok(s) => s.len(),
                     Err(err) => {
                         warn!("SYNC failed. Can't open/stat DB after BGSAVE: {}",
-                              err.description());
+                              err);
                         continue;
                     }
                 };
