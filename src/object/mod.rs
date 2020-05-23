@@ -1,28 +1,27 @@
-pub mod list;
 pub mod dict;
-pub mod skip_list;
 pub mod int_set;
+pub mod linked_list;
+pub mod list;
+pub mod skip_list;
 pub mod zip_list;
 pub mod zset;
-pub mod linked_list;
 
-
-use std::time::SystemTime;
 use std::cell::RefCell;
-use std::rc::Rc;
 use std::error::Error;
+use std::rc::Rc;
+use std::time::SystemTime;
 
-use list::List;
-use zip_list::ZipList;
 use dict::{Dict, DictPartialEq};
 use int_set::IntSet;
+use list::List;
+use zip_list::ZipList;
 use zset::Zset;
 
 use crate::hash;
-use rand::prelude::*;
-use crate::object::zip_list::ZipListValue;
 use crate::object::list::ListWhere;
-use crate::util::{bytes_vec, bytes_to_i64, bytes_to_f64};
+use crate::object::zip_list::ZipListValue;
+use crate::util::{bytes_to_f64, bytes_to_i64, bytes_vec};
+use rand::prelude::*;
 use std::cmp::Ordering;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -48,22 +47,54 @@ pub enum RobjEncoding {
 }
 
 pub trait ObjectData {
-    fn bytes_ref(&self) -> &[u8] { panic!("This is not a byte slice") }
-    fn sds_ref(&self) -> &str { panic!("This is not an Sds string") }
-    fn raw_bytes(&self) -> &[u8] { panic!("This type has no raw bytes") }
-    fn integer(&self) -> i64 { panic!("This is not an integer") }
-    fn linked_list_ref(&self) -> &List { panic!("This is not a List") }
-    fn linked_list_mut(&mut self) -> &mut List { panic!("This is not a List") }
-    fn set_ref(&self) -> &Set { panic!("This is not a Set") }
-    fn set_mut(&mut self) -> &mut Set { panic!("This is not a Set") }
-    fn zip_list_ref(&self) -> &ZipList { panic!("This is not a ZipList") }
-    fn zip_list_mut(&mut self) -> &mut ZipList { panic!("This is not a ZipList") }
-    fn hash_table_ref(&self) -> &Dict<RobjPtr, RobjPtr> { panic!("This is not a hash table") }
-    fn int_set_ref(&self) -> &IntSet { panic!("This is not an IntSet") }
-    fn int_set_mut(&mut self) -> &mut IntSet { panic!("This is not an IntSet") }
-    fn set_wrapper_ref(&self) -> &dyn SetWrapper { panic!("This is not as SetWrapper") }
-    fn set_wrapper_mut(&mut self) -> &mut dyn SetWrapper { panic!("This is not as SetWrapper") }
-    fn zset_ref(&self) -> &Zset { panic!("This is not a Zset") }
+    fn bytes_ref(&self) -> &[u8] {
+        panic!("This is not a byte slice")
+    }
+    fn sds_ref(&self) -> &str {
+        panic!("This is not an Sds string")
+    }
+    fn raw_bytes(&self) -> &[u8] {
+        panic!("This type has no raw bytes")
+    }
+    fn integer(&self) -> i64 {
+        panic!("This is not an integer")
+    }
+    fn linked_list_ref(&self) -> &List {
+        panic!("This is not a List")
+    }
+    fn linked_list_mut(&mut self) -> &mut List {
+        panic!("This is not a List")
+    }
+    fn set_ref(&self) -> &Set {
+        panic!("This is not a Set")
+    }
+    fn set_mut(&mut self) -> &mut Set {
+        panic!("This is not a Set")
+    }
+    fn zip_list_ref(&self) -> &ZipList {
+        panic!("This is not a ZipList")
+    }
+    fn zip_list_mut(&mut self) -> &mut ZipList {
+        panic!("This is not a ZipList")
+    }
+    fn hash_table_ref(&self) -> &Dict<RobjPtr, RobjPtr> {
+        panic!("This is not a hash table")
+    }
+    fn int_set_ref(&self) -> &IntSet {
+        panic!("This is not an IntSet")
+    }
+    fn int_set_mut(&mut self) -> &mut IntSet {
+        panic!("This is not an IntSet")
+    }
+    fn set_wrapper_ref(&self) -> &dyn SetWrapper {
+        panic!("This is not as SetWrapper")
+    }
+    fn set_wrapper_mut(&mut self) -> &mut dyn SetWrapper {
+        panic!("This is not as SetWrapper")
+    }
+    fn zset_ref(&self) -> &Zset {
+        panic!("This is not a Zset")
+    }
     fn encoding(&self) -> RobjEncoding;
 }
 
@@ -80,13 +111,13 @@ pub struct Robj {
 pub trait SetWrapper {
     fn sw_len(&self) -> usize;
     fn sw_delete(&mut self, o: &RobjPtr) -> Result<(), ()>;
-    fn sw_iter<'a>(&'a self) -> Box<dyn Iterator<Item=RobjPtr> + 'a>;
+    fn sw_iter<'a>(&'a self) -> Box<dyn Iterator<Item = RobjPtr> + 'a>;
     fn sw_exists(&self, o: &RobjPtr) -> bool;
     fn sw_pop_random(&mut self) -> RobjPtr;
 }
 
 pub struct SWInterIter<'a> {
-    main: Box<dyn Iterator<Item=RobjPtr> + 'a>,
+    main: Box<dyn Iterator<Item = RobjPtr> + 'a>,
     others: &'a [RobjPtr],
 }
 
@@ -97,10 +128,8 @@ impl Robj {
 
     pub fn string_len(&self) -> usize {
         match self.encoding() {
-            RobjEncoding::Int => {
-                self.integer().to_string().len()
-            }
-            _ => self.string().len()
+            RobjEncoding::Int => self.integer().to_string().len(),
+            _ => self.string().len(),
         }
     }
 
@@ -110,30 +139,23 @@ impl Robj {
 
     pub fn string_cmp(&self, other: &RobjPtr) -> Ordering {
         match self.encoding() {
-            RobjEncoding::Int => {
-                match other.borrow().encoding() {
-                    RobjEncoding::Int => {
-                        self.integer().to_string()
-                            .cmp(&other.borrow().integer().to_string())
-                    }
-                    _ => {
-                        self.integer().to_string().as_bytes()
-                            .cmp(other.borrow().string())
-                    }
-                }
-            }
-            _ => {
-                match other.borrow().encoding() {
-                    RobjEncoding::Int => {
-                        self.string()
-                            .cmp(other.borrow().integer().to_string().as_bytes())
-                    }
-                    _ => {
-                        self.string()
-                            .cmp(other.borrow().string())
-                    }
-                }
-            }
+            RobjEncoding::Int => match other.borrow().encoding() {
+                RobjEncoding::Int => self
+                    .integer()
+                    .to_string()
+                    .cmp(&other.borrow().integer().to_string()),
+                _ => self
+                    .integer()
+                    .to_string()
+                    .as_bytes()
+                    .cmp(other.borrow().string()),
+            },
+            _ => match other.borrow().encoding() {
+                RobjEncoding::Int => self
+                    .string()
+                    .cmp(other.borrow().integer().to_string().as_bytes()),
+                _ => self.string().cmp(other.borrow().string()),
+            },
         }
     }
 
@@ -151,12 +173,10 @@ impl Robj {
         }
         match self.encoding() {
             RobjEncoding::Int => Ok(self.integer() as f64),
-            _ => {
-                match bytes_to_f64(self.string()) {
-                    Ok(n) => Ok(n),
-                    Err(_) => Err(()),
-                }
-            }
+            _ => match bytes_to_f64(self.string()) {
+                Ok(n) => Ok(n),
+                Err(_) => Err(()),
+            },
         }
     }
 
@@ -198,70 +218,42 @@ impl Robj {
     }
 
     pub fn create_object(obj_type: RobjType, encoding: RobjEncoding, ptr: Pointer) -> RobjPtr {
-        Rc::new(RefCell::new(
-            Robj {
-                obj_type,
-                encoding,
-                lru: SystemTime::now(),
-                ptr,
-            }
-        ))
+        Rc::new(RefCell::new(Robj {
+            obj_type,
+            encoding,
+            lru: SystemTime::now(),
+            ptr,
+        }))
     }
 
     pub fn create_int_object(i: i64) -> RobjPtr {
-        Self::create_object(
-            RobjType::String,
-            RobjEncoding::Int,
-            Box::new(i),
-        )
+        Self::create_object(RobjType::String, RobjEncoding::Int, Box::new(i))
     }
 
     pub fn gen_string(&self) -> RobjPtr {
-        Self::create_string_object_from_long(
-            self.ptr.integer(),
-        )
+        Self::create_string_object_from_long(self.ptr.integer())
     }
 
     pub fn create_string_object(string: &str) -> RobjPtr {
         let bytes: Vec<u8> = bytes_vec(string.as_bytes());
-        Self::create_object(
-            RobjType::String,
-            RobjEncoding::Raw,
-            Box::new(bytes),
-        )
+        Self::create_object(RobjType::String, RobjEncoding::Raw, Box::new(bytes))
     }
 
     pub fn create_bytes_object(bytes: &[u8]) -> RobjPtr {
         let bytes: Vec<u8> = bytes_vec(bytes);
-        Self::create_object(
-            RobjType::String,
-            RobjEncoding::Raw,
-            Box::new(bytes),
-        )
+        Self::create_object(RobjType::String, RobjEncoding::Raw, Box::new(bytes))
     }
 
     pub fn from_bytes(bytes: Vec<u8>) -> RobjPtr {
-        Self::create_object(
-            RobjType::String,
-            RobjEncoding::Raw,
-            Box::new(bytes),
-        )
+        Self::create_object(RobjType::String, RobjEncoding::Raw, Box::new(bytes))
     }
 
     pub fn from_linked_list(list: List) -> RobjPtr {
-        Self::create_object(
-            RobjType::List,
-            RobjEncoding::LinkedList,
-            Box::new(list),
-        )
+        Self::create_object(RobjType::List, RobjEncoding::LinkedList, Box::new(list))
     }
 
     pub fn from_set(set: Set) -> RobjPtr {
-        Self::create_object(
-            RobjType::Set,
-            RobjEncoding::Ht,
-            Box::new(set),
-        )
+        Self::create_object(RobjType::Set, RobjEncoding::Ht, Box::new(set))
     }
 
     pub fn zip_list_from_bytes(bytes: Vec<u8>) -> RobjPtr {
@@ -296,21 +288,13 @@ impl Robj {
     pub fn create_string_object_from_long(value: i64) -> Rc<RefCell<Robj>> {
         let bytes: Vec<u8> = bytes_vec(&value.to_string().as_bytes());
         let ptr = Box::new(bytes);
-        Self::create_object(
-            RobjType::String,
-            RobjEncoding::Raw,
-            ptr,
-        )
+        Self::create_object(RobjType::String, RobjEncoding::Raw, ptr)
     }
 
     pub fn create_string_object_from_double(value: f64) -> Rc<RefCell<Robj>> {
         let bytes: Vec<u8> = bytes_vec(&value.to_string().as_bytes());
         let ptr = Box::new(bytes);
-        Self::create_object(
-            RobjType::String,
-            RobjEncoding::Raw,
-            ptr,
-        )
+        Self::create_object(RobjType::String, RobjEncoding::Raw, ptr)
     }
 
     pub fn string_obj_eq(lhs: &RobjPtr, rhs: &RobjPtr) -> bool {
@@ -337,29 +321,17 @@ impl Robj {
         let mut rng = rand::thread_rng();
         let num: u64 = rng.gen();
         let s: Set = Dict::new(hash::string_object_hash, num);
-        Self::create_object(
-            RobjType::Set,
-            RobjEncoding::Ht,
-            Box::new(s),
-        )
+        Self::create_object(RobjType::Set, RobjEncoding::Ht, Box::new(s))
     }
 
     pub fn create_int_set_object() -> RobjPtr {
-        Self::create_object(
-            RobjType::Set,
-            RobjEncoding::IntSet,
-            Box::new(IntSet::new()),
-        )
+        Self::create_object(RobjType::Set, RobjEncoding::IntSet, Box::new(IntSet::new()))
     }
 
     pub fn create_hash_object() -> RobjPtr {
         let num: u64 = rand::thread_rng().gen();
         let ht: Dict<RobjPtr, RobjPtr> = Dict::new(hash::string_object_hash, num);
-        Self::create_object(
-            RobjType::Hash,
-            RobjEncoding::Ht,
-            Box::new(ht),
-        )
+        Self::create_object(RobjType::Hash, RobjEncoding::Ht, Box::new(ht))
     }
 
     pub fn create_zset_object() -> RobjPtr {
@@ -400,11 +372,11 @@ impl Robj {
         self.obj_type
     }
 
-    pub fn linear_iter<'a>(&'a self) -> Box<dyn Iterator<Item=RobjPtr> + 'a> {
+    pub fn linear_iter<'a>(&'a self) -> Box<dyn Iterator<Item = RobjPtr> + 'a> {
         match self.obj_type {
             RobjType::Set => self.set_iter(),
             RobjType::List => self.list_iter(),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -412,7 +384,7 @@ impl Robj {
         match self.obj_type {
             RobjType::Set => self.set_len(),
             RobjType::List => self.list_len(),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -446,8 +418,7 @@ impl Robj {
     }
 
     fn list_can_upgrade(&self, o: &RobjPtr) -> bool {
-        if (o.borrow().string_len() > (1 << 16)) ||
-            (self.list_len() == 7) {
+        if (o.borrow().string_len() > (1 << 16)) || (self.list_len() == 7) {
             return true;
         }
         false
@@ -460,8 +431,7 @@ impl Robj {
         for v in old_list.iter_rev() {
             let obj = match v {
                 ZipListValue::Int(n) => Robj::create_string_object_from_long(n),
-                ZipListValue::Bytes(b) =>
-                    Robj::create_bytes_object(b),
+                ZipListValue::Bytes(b) => Robj::create_bytes_object(b),
             };
             new_list.push_front(obj);
         }
@@ -485,8 +455,7 @@ impl Robj {
             }
             let ret = match node.value() {
                 ZipListValue::Int(i) => Robj::create_string_object_from_long(i),
-                ZipListValue::Bytes(b) =>
-                    Robj::create_bytes_object(b),
+                ZipListValue::Bytes(b) => Robj::create_bytes_object(b),
             };
             node.delete();
             Some(ret)
@@ -525,14 +494,12 @@ impl Robj {
                     return None;
                 }
                 let r = match l.iter().skip(idx).next().unwrap() {
-                    ZipListValue::Int(i) =>
-                        Robj::create_string_object_from_long(i),
-                    ZipListValue::Bytes(b) =>
-                        Robj::create_bytes_object(b),
+                    ZipListValue::Int(i) => Robj::create_string_object_from_long(i),
+                    ZipListValue::Bytes(b) => Robj::create_bytes_object(b),
                 };
                 Some(r)
             }
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -540,7 +507,7 @@ impl Robj {
         match self.encoding() {
             RobjEncoding::LinkedList => self.linked_list_set(idx, o),
             RobjEncoding::ZipList => self.zip_list_set(idx, o),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -573,24 +540,20 @@ impl Robj {
         Ok(())
     }
 
-    pub fn list_iter<'a>(&'a self) -> Box<dyn Iterator<Item=RobjPtr> + 'a> {
+    pub fn list_iter<'a>(&'a self) -> Box<dyn Iterator<Item = RobjPtr> + 'a> {
         match self.encoding() {
             RobjEncoding::ZipList => {
                 let l = self.ptr.zip_list_ref();
-                Box::new(l.iter()
-                    .map(|x| match x {
-                        ZipListValue::Int(i) =>
-                            Robj::create_string_object_from_long(i),
-                        ZipListValue::Bytes(b) =>
-                            Robj::create_bytes_object(b)
-                    }))
+                Box::new(l.iter().map(|x| match x {
+                    ZipListValue::Int(i) => Robj::create_string_object_from_long(i),
+                    ZipListValue::Bytes(b) => Robj::create_bytes_object(b),
+                }))
             }
             RobjEncoding::LinkedList => {
                 let l = self.ptr.linked_list_ref();
-                Box::new(l.iter()
-                    .map(|x| Rc::clone(x)))
+                Box::new(l.iter().map(|x| Rc::clone(x)))
             }
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -598,7 +561,7 @@ impl Robj {
         match self.encoding() {
             RobjEncoding::ZipList => self.zip_list_trim(start, end),
             RobjEncoding::LinkedList => self.linked_list_trim(start, end),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -631,7 +594,7 @@ impl Robj {
         match self.encoding() {
             RobjEncoding::ZipList => self.zip_list_del_n(w, n, o),
             RobjEncoding::LinkedList => self.linked_list_del_n(w, n, o),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -647,12 +610,8 @@ impl Robj {
 
         let f = |val: &ZipListValue| -> bool {
             match val {
-                ZipListValue::Int(i) => {
-                    s == format!("{}", *i).as_bytes()
-                }
-                ZipListValue::Bytes(b) => {
-                    s == *b
-                }
+                ZipListValue::Int(i) => s == format!("{}", *i).as_bytes(),
+                ZipListValue::Bytes(b) => s == *b,
             }
         };
 
@@ -720,7 +679,7 @@ impl Robj {
                 let set = self.ptr.int_set_mut();
                 set.add(i)
             }
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -743,7 +702,7 @@ impl Robj {
         self.ptr.set_wrapper_mut().sw_delete(o)
     }
 
-    pub fn set_iter<'a>(&'a self) -> Box<dyn Iterator<Item=RobjPtr> + 'a> {
+    pub fn set_iter<'a>(&'a self) -> Box<dyn Iterator<Item = RobjPtr> + 'a> {
         self.ptr.set_wrapper_ref().sw_iter()
     }
 
@@ -892,9 +851,8 @@ impl SetWrapper for Set {
         self.delete(o).map(|_| ())
     }
 
-    fn sw_iter<'a>(&'a self) -> Box<dyn Iterator<Item=RobjPtr> + 'a> {
-        Box::new(self.iter()
-            .map(|x| Rc::clone(x.0)))
+    fn sw_iter<'a>(&'a self) -> Box<dyn Iterator<Item = RobjPtr> + 'a> {
+        Box::new(self.iter().map(|x| Rc::clone(x.0)))
     }
 
     fn sw_exists(&self, o: &RobjPtr) -> bool {
@@ -925,9 +883,8 @@ impl SetWrapper for IntSet {
         }
     }
 
-    fn sw_iter<'a>(&'a self) -> Box<dyn Iterator<Item=RobjPtr> + 'a> {
-        Box::new(self.iter()
-            .map(|x| Robj::create_string_object_from_long(x)))
+    fn sw_iter<'a>(&'a self) -> Box<dyn Iterator<Item = RobjPtr> + 'a> {
+        Box::new(self.iter().map(|x| Robj::create_string_object_from_long(x)))
     }
 
     fn sw_exists(&self, o: &RobjPtr) -> bool {
@@ -965,7 +922,6 @@ impl<'a> Iterator for SWInterIter<'a> {
         None
     }
 }
-
 
 #[cfg(test)]
 mod test {

@@ -1,15 +1,12 @@
 use std::error::Error;
 use std::num::ParseIntError;
-use std::time::{SystemTime, Duration};
+use std::time::{Duration, SystemTime};
 
 pub fn case_eq(lhs: &[u8], rhs: &[u8]) -> bool {
     if lhs.len() != rhs.len() {
         return false;
     }
-    for p in rhs
-        .iter()
-        .map(|x| x.to_ascii_lowercase())
-        .zip(lhs.iter()) {
+    for p in rhs.iter().map(|x| x.to_ascii_lowercase()).zip(lhs.iter()) {
         if p.0 != *p.1 {
             return false;
         }
@@ -69,7 +66,7 @@ pub fn human_size(s: &str) -> Result<usize, ParseIntError> {
     let err = s.parse::<usize>();
 
     let human = s.to_ascii_lowercase();
-    if let Some(i) = human.find(|ch: char| { ch.is_ascii_alphabetic() }) {
+    if let Some(i) = human.find(|ch: char| ch.is_ascii_alphabetic()) {
         let (num, suffix) = human.split_at(i);
         let num: usize = match num.parse::<usize>() {
             Ok(n) => n,
@@ -116,10 +113,7 @@ pub fn is_prefix_of(p: &str, haystack: &str) -> bool {
 }
 
 pub fn generate_key_from_pattern(pat: &[u8], s: &[u8]) -> Vec<u8> {
-    let k = match pat.iter()
-        .enumerate()
-        .filter(|c| *((*c).1) == b'*')
-        .next() {
+    let k = match pat.iter().enumerate().filter(|c| *((*c).1) == b'*').next() {
         Some(i) => i.0,
         None => return pat.to_vec(),
     };
@@ -131,7 +125,9 @@ pub fn generate_key_from_pattern(pat: &[u8], s: &[u8]) -> Vec<u8> {
 }
 
 pub fn unix_timestamp(t: &SystemTime) -> u64 {
-    t.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64
+    t.duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
 }
 
 pub fn to_system_time(timestamp: u64) -> SystemTime {

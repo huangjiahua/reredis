@@ -1,18 +1,18 @@
 use crate::ae::*;
-use std::time::SystemTime;
-use std::rc::Rc;
-use crate::env::{read_query_from_client, send_reply_to_client};
-use std::cell::RefCell;
-use crate::object::{RobjPtr, Robj};
-use crate::protocol;
-use crate::server::Server;
 use crate::command::{lookup_command, CMD_DENY_OOM};
+use crate::env::{read_query_from_client, send_reply_to_client};
+use crate::lua::LuaRedis;
+use crate::object::{Robj, RobjPtr};
+use crate::protocol;
+use crate::replicate;
+use crate::server::Server;
 use crate::util::*;
 use crate::zalloc;
-use crate::replicate;
-use std::fs::File;
 use mio::Token;
-use crate::lua::LuaRedis;
+use std::cell::RefCell;
+use std::fs::File;
+use std::rc::Rc;
+use std::time::SystemTime;
 
 pub const CLIENT_CLOSE: i32 = 0b0001;
 pub const CLIENT_SLAVE: i32 = 0b0010;
@@ -71,9 +71,7 @@ pub struct Client {
 
 impl Client {
     pub fn with_fd_and_el(fd: Fd, el: &mut AeEventLoop) -> Result<Rc<RefCell<Client>>, ()> {
-        let client = Rc::new(RefCell::new(
-            Self::new_default_client(fd)
-        ));
+        let client = Rc::new(RefCell::new(Self::new_default_client(fd)));
         el.create_file_event(
             Rc::clone(&client.borrow().fd),
             AE_READABLE,
@@ -85,9 +83,7 @@ impl Client {
     }
 
     pub fn with_fd(fd: Fd) -> Rc<RefCell<Client>> {
-        let client = Rc::new(RefCell::new(
-            Self::new_default_client(fd)
-        ));
+        let client = Rc::new(RefCell::new(Self::new_default_client(fd)));
         client
     }
 
@@ -166,12 +162,8 @@ impl Client {
             }
 
             let result = match self.request_type {
-                RequestType::Inline => {
-                    self.process_inline_buffer()
-                }
-                RequestType::MultiBulk => {
-                    self.process_multi_bulk_buffer()
-                }
+                RequestType::Inline => self.process_inline_buffer(),
+                RequestType::MultiBulk => self.process_multi_bulk_buffer(),
                 _ => {
                     unreachable!();
                 }
@@ -196,7 +188,9 @@ impl Client {
 
     fn process_inline_buffer(&mut self) -> Result<(), ProcessQueryError> {
         let mut pos: usize;
-        let new_line = self.query_buf.iter()
+        let new_line = self
+            .query_buf
+            .iter()
             .enumerate()
             .find(|(_, ch)| **ch == b'\n')
             .map(|x| x.0);
@@ -219,9 +213,7 @@ impl Client {
         };
 
         for arg in s.split_ascii_whitespace() {
-            self.argv.push(
-                Robj::create_string_object(arg)
-            );
+            self.argv.push(Robj::create_string_object(arg));
         }
 
         if self.argv.is_empty() {
@@ -239,7 +231,9 @@ impl Client {
         let mut pos: usize = 0;
         if self.multi_bulk_len == 0 {
             assert_eq!(self.argc(), 0);
-            new_line = self.query_buf.iter()
+            new_line = self
+                .query_buf
+                .iter()
                 .enumerate()
                 .find(|(_, ch)| **ch == b'\r')
                 .map(|x| x.0);
@@ -257,13 +251,7 @@ impl Client {
 
             let ll = bytes_to_i64(&self.query_buf[1..pos])
                 .map_err(|_| ())
-                .and_then(|x| {
-                    if x > 1024 * 1024 {
-                        Err(())
-                    } else {
-                        Ok(x)
-                    }
-                })
+                .and_then(|x| if x > 1024 * 1024 { Err(()) } else { Ok(x) })
                 .map_err(|_| {
                     self.add_str_reply("-ERR Protocol Error: invalid bulk length\r\n");
                     ProcessQueryError::Protocol(1)
@@ -289,7 +277,9 @@ impl Client {
 
         while self.multi_bulk_len > 0 {
             if let None = self.bulk_len {
-                new_line = self.query_buf.iter()
+                new_line = self
+                    .query_buf
+                    .iter()
                     .enumerate()
                     .skip(pos)
                     .find(|(_, ch)| **ch == b'\r')
@@ -306,10 +296,10 @@ impl Client {
                 }
 
                 if self.query_buf[pos] != b'$' {
-                    self.add_reply_from_string(
-                        format!("-ERR Protocol Error: expected '$', got {}\r\n",
-                                self.query_buf[pos] as char)
-                    );
+                    self.add_reply_from_string(format!(
+                        "-ERR Protocol Error: expected '$', got {}\r\n",
+                        self.query_buf[pos] as char
+                    ));
                     return Err(ProcessQueryError::Protocol(pos));
                 }
 
@@ -334,9 +324,8 @@ impl Client {
             if self.query_buf.len() - pos < self.bulk_len.unwrap() + 2 {
                 break;
             } else {
-                let arg = Robj::create_bytes_object(
-                    &self.query_buf[pos..pos + self.bulk_len.unwrap()]
-                );
+                let arg =
+                    Robj::create_bytes_object(&self.query_buf[pos..pos + self.bulk_len.unwrap()]);
                 pos += self.bulk_len.unwrap() + 2;
                 self.argv.push(arg);
                 self.bulk_len = None;
@@ -369,9 +358,7 @@ impl Client {
             return Err(CommandError::Quit);
         }
 
-        let cmd = lookup_command(
-            self.argv[0].borrow().string(),
-        );
+        let cmd = lookup_command(self.argv[0].borrow().string());
         let cmd = match cmd {
             None => {
                 self.add_str_reply("-Error unknown command\r\n");
@@ -382,13 +369,15 @@ impl Client {
         };
 
         if (cmd.arity > 0 && cmd.arity as usize != self.argc())
-            || (cmd.arity < 0 && (self.argc() < (-cmd.arity) as usize)) {
+            || (cmd.arity < 0 && (self.argc() < (-cmd.arity) as usize))
+        {
             self.add_str_reply("-Error wrong number of arguments\r\n");
             self.reset();
             return Err(CommandError::WrongNumber);
-        } else if server.max_memory > 0 &&
-            cmd.flags & CMD_DENY_OOM != 0 &&
-            zalloc::allocated_memory() > server.max_memory {
+        } else if server.max_memory > 0
+            && cmd.flags & CMD_DENY_OOM != 0
+            && zalloc::allocated_memory() > server.max_memory
+        {
             self.add_str_reply("-ERR command not allowed when used memory > 'maxmemory'\r\n");
             self.reset();
             return Err(CommandError::OOM);
@@ -446,15 +435,11 @@ impl Client {
     }
 
     pub fn add_str_reply(&mut self, s: &str) {
-        self.add_reply(
-            Robj::create_string_object(s),
-        );
+        self.add_reply(Robj::create_string_object(s));
     }
 
     pub fn add_reply_from_string(&mut self, s: String) {
-        self.add_reply(
-            Robj::from_bytes(s.into_bytes())
-        )
+        self.add_reply(Robj::from_bytes(s.into_bytes()))
     }
 
     pub fn glue_reply(&mut self) {

@@ -1,5 +1,5 @@
-use std::ops::IndexMut;
 use rand::Rng;
+use std::ops::IndexMut;
 
 const DICT_HT_INITIAL_SIZE: usize = 4;
 
@@ -29,7 +29,8 @@ struct DictEntry<K: DictPartialEq, V> {
 }
 
 impl<K, V> DictEntry<K, V>
-    where K: DictPartialEq
+where
+    K: DictPartialEq,
 {
     fn new(key: K, value: V) -> Self {
         DictEntry {
@@ -45,14 +46,13 @@ struct DictEntryIterator<'a, K: DictPartialEq, V> {
 }
 
 impl<'a, K, V> Iterator for DictEntryIterator<'a, K, V>
-    where K: DictPartialEq
+where
+    K: DictPartialEq,
 {
     type Item = (&'a K, &'a V);
     fn next(&mut self) -> Option<Self::Item> {
         self.next.take().map(|entry| {
-            self.next = entry.next
-                .as_ref()
-                .map(|entry| &**entry);
+            self.next = entry.next.as_ref().map(|entry| &**entry);
             (&entry.key, &entry.value)
         })
     }
@@ -63,19 +63,18 @@ struct DictEntryIteratorMut<'a, K: DictPartialEq, V> {
 }
 
 impl<'a, K, V> Iterator for DictEntryIteratorMut<'a, K, V>
-    where K: DictPartialEq {
+where
+    K: DictPartialEq,
+{
     type Item = (&'a K, &'a mut V);
 
     fn next(&mut self) -> Option<Self::Item> {
         self.next.take().map(|entry| {
-            self.next = entry.next
-                .as_mut()
-                .map(|entry| &mut **entry);
+            self.next = entry.next.as_mut().map(|entry| &mut **entry);
             (&entry.key, &mut entry.value)
         })
     }
 }
-
 
 struct DictTable<K: DictPartialEq, V> {
     pub table: Vec<Option<Box<DictEntry<K, V>>>>,
@@ -85,7 +84,8 @@ struct DictTable<K: DictPartialEq, V> {
 }
 
 impl<K, V> DictTable<K, V>
-    where K: DictPartialEq
+where
+    K: DictPartialEq,
 {
     fn new() -> DictTable<K, V> {
         DictTable {
@@ -98,13 +98,17 @@ impl<K, V> DictTable<K, V>
 
     fn iter(&self, index: usize) -> DictEntryIterator<K, V> {
         DictEntryIterator {
-            next: self.table[index].as_ref().map(|entry| &**entry)
+            next: self.table[index].as_ref().map(|entry| &**entry),
         }
     }
 
     fn iter_mut(&mut self, index: usize) -> DictEntryIteratorMut<K, V> {
         DictEntryIteratorMut {
-            next: self.table.index_mut(index).as_mut().map(|entry| &mut **entry)
+            next: self
+                .table
+                .index_mut(index)
+                .as_mut()
+                .map(|entry| &mut **entry),
         }
     }
 
@@ -130,7 +134,8 @@ pub struct Dict<K: DictPartialEq, V> {
 }
 
 impl<K, V> Dict<K, V>
-    where K: DictPartialEq
+where
+    K: DictPartialEq,
 {
     pub fn new(f: fn(&K, u64) -> usize, hash_seed: u64) -> Dict<K, V> {
         let table1: DictTable<K, V> = DictTable::new();
@@ -163,10 +168,7 @@ impl<K, V> Dict<K, V>
         for table in 0..2 {
             let idx = h & self.ht[table].size_mask;
 
-            if let Some((k, v)) = self.ht[table]
-                .iter(idx)
-                .filter(|e| e.0.eq(key))
-                .next() {
+            if let Some((k, v)) = self.ht[table].iter(idx).filter(|e| e.0.eq(key)).next() {
                 return Some((k, v));
             }
 
@@ -191,10 +193,7 @@ impl<K, V> Dict<K, V>
         for table in 0..2 {
             let idx = h & self.ht[table].size_mask;
 
-            if let Some((k, v)) = self.ht[table]
-                .iter(idx)
-                .filter(|e| e.0.eq(key))
-                .next() {
+            if let Some((k, v)) = self.ht[table].iter(idx).filter(|e| e.0.eq(key)).next() {
                 return Some((k, v));
             }
 
@@ -276,9 +275,7 @@ impl<K, V> Dict<K, V>
         let mut break_outer = false;
 
         for t in 0..2 {
-            for (i, v) in self.ht[t].table
-                .iter()
-                .enumerate() {
+            for (i, v) in self.ht[t].table.iter().enumerate() {
                 if v.is_some() {
                     table = t;
                     index = i;
@@ -297,9 +294,7 @@ impl<K, V> Dict<K, V>
                 table,
                 index,
                 save: false,
-                entry: self.ht[table].table[index]
-                    .as_ref()
-                    .map(|e| &**e),
+                entry: self.ht[table].table[index].as_ref().map(|e| &**e),
             }
         } else {
             Iter {
@@ -351,7 +346,10 @@ impl<K, V> Dict<K, V>
     }
 
     pub fn random_key_value(&self) -> (&K, &V) {
-        assert!(self.len() > 0, "cannot generate random key value on empty dict");
+        assert!(
+            self.len() > 0,
+            "cannot generate random key value on empty dict"
+        );
         let mut rng = rand::thread_rng();
         let mut bucket = self.ht[0].size;
         if self.is_rehashing() {
@@ -377,10 +375,7 @@ impl<K, V> Dict<K, V>
 
             if list_len > 0 {
                 let n = rng.gen_range(0, list_len);
-                let kv = ht.iter(idx)
-                    .skip(n)
-                    .next()
-                    .unwrap();
+                let kv = ht.iter(idx).skip(n).next().unwrap();
                 return kv;
             }
 
@@ -494,10 +489,7 @@ impl<K, V> Dict<K, V>
         for table in 0..2 {
             idx = h & self.ht[table].size_mask;
 
-            if let Some(_) = self.ht[table]
-                .iter(idx)
-                .filter(|e| e.0.eq(key))
-                .next() {
+            if let Some(_) = self.ht[table].iter(idx).filter(|e| e.0.eq(key)).next() {
                 return Err(());
             }
 
@@ -539,11 +531,7 @@ impl<K, V> Dict<K, V>
             new_table.push(None);
         }
 
-        table = if self.ht[0].size == 0 {
-            0
-        } else {
-            1
-        };
+        table = if self.ht[0].size == 0 { 0 } else { 1 };
 
         self.ht[table].size = real_size;
         self.ht[table].size_mask = real_size - 1;
@@ -579,10 +567,7 @@ impl<K, V> Dict<K, V>
         for table in 0..2 {
             let idx = idx & self.ht[table].size_mask;
 
-            if let Some(v) = self.ht[table]
-                .iter_mut(idx)
-                .filter(|p| p.0.eq(&key))
-                .next() {
+            if let Some(v) = self.ht[table].iter_mut(idx).filter(|p| p.0.eq(&key)).next() {
                 *v.1 = value;
                 return None;
             }
@@ -604,7 +589,9 @@ pub struct Iter<'a, K: DictPartialEq, V> {
 }
 
 impl<'a, K, V> Iterator for Iter<'a, K, V>
-    where K: DictPartialEq {
+where
+    K: DictPartialEq,
+{
     type Item = (&'a K, &'a V);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -614,9 +601,7 @@ impl<'a, K, V> Iterator for Iter<'a, K, V>
         match en {
             None => return None,
             Some(e) => {
-                self.entry = e.next
-                    .as_ref()
-                    .map(|e| &**e);
+                self.entry = e.next.as_ref().map(|e| &**e);
                 // the next is set, don't need to worry
                 // about it
                 if self.entry.is_some() {
@@ -821,9 +806,7 @@ mod test {
     #[test]
     fn iterate_empty_table() {
         let hd: Dict<usize, usize> = Dict::new(int_hash_func, 0);
-        let v: Vec<usize> = hd.iter()
-            .map(|x| *x.1)
-            .collect();
+        let v: Vec<usize> = hd.iter().map(|x| *x.1).collect();
         assert_eq!(v.len(), 0);
     }
 
@@ -860,7 +843,9 @@ mod test {
         assert!(hd.fetch_value(&k).is_none());
 
         for i in 0..100 {
-            if i == k { continue; }
+            if i == k {
+                continue;
+            }
             assert_eq!(hd.fetch_value(&i).unwrap(), &i);
         }
     }
@@ -894,4 +879,3 @@ mod test {
         assert_eq!(next_power(std::usize::MAX), std::usize::MAX);
     }
 }
-

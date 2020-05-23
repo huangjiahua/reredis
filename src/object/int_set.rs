@@ -1,5 +1,5 @@
-use std::mem;
 use std::convert::TryInto;
+use std::mem;
 
 pub struct IntSet(Vec<u8>);
 
@@ -26,10 +26,7 @@ impl IntSet {
     }
 
     pub fn iter(&self) -> Iter {
-        Iter {
-            set: self,
-            idx: 0,
-        }
+        Iter { set: self, idx: 0 }
     }
 
     pub fn raw_slice(&self) -> &[u8] {
@@ -126,11 +123,7 @@ impl IntSet {
     fn get_by_enc(&self, pos: usize, enc: Encoding) -> i64 {
         let pos = Self::true_pos_enc(pos, enc);
         let enc = enc as usize;
-        let mut v = if self.0[pos + enc - 1] > 127 {
-            -1
-        } else {
-            0
-        };
+        let mut v = if self.0[pos + enc - 1] > 127 { -1 } else { 0 };
 
         for i in (0..enc).rev() {
             v <<= 8;
@@ -266,8 +259,6 @@ fn _i64_from(b: &[u8]) -> i64 {
     i64::from_be_bytes(int_bytes.try_into().unwrap())
 }
 
-
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -284,9 +275,15 @@ mod test {
     fn encoding() {
         assert_eq!(IntSet::value_encoding(0), INT_SET_ENC_INT16);
         assert_eq!(IntSet::value_encoding(9999), INT_SET_ENC_INT16);
-        assert_eq!(IntSet::value_encoding((i16::MAX as i64) + 1), INT_SET_ENC_INT32);
+        assert_eq!(
+            IntSet::value_encoding((i16::MAX as i64) + 1),
+            INT_SET_ENC_INT32
+        );
         assert_eq!(IntSet::value_encoding(i32::MAX as i64), INT_SET_ENC_INT32);
-        assert_eq!(IntSet::value_encoding((i32::MAX as i64) + 1), INT_SET_ENC_INT64);
+        assert_eq!(
+            IntSet::value_encoding((i32::MAX as i64) + 1),
+            INT_SET_ENC_INT64
+        );
     }
 
     #[test]

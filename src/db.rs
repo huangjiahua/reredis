@@ -1,9 +1,9 @@
-use crate::object::RobjPtr;
-use crate::object::dict::Dict;
 use crate::hash::string_object_hash;
+use crate::object::dict::Dict;
+use crate::object::RobjPtr;
 use rand::Rng;
-use std::time::SystemTime;
 use std::rc::Rc;
+use std::time::SystemTime;
 
 pub struct DB {
     pub id: usize,
@@ -98,18 +98,18 @@ mod test {
         let _ = DB::new(0);
     }
 
-//    #[test]
-//    fn add_and_look_up() {
-//        let mut db = DB::new(0);
-//        for i in 0..100 {
-//            db.add(Robj::create_string_object_from_long(i),
-//                   Robj::create_string_object_from_long(i));
-//        }
-//        for i in 0..100 {
-//            let r: &RobjPtr =
-//                db.look_up(&Robj::create_string_object_from_long(i)).unwrap();
-//            let k = r.borrow().object_to_long().unwrap();
-//            assert_eq!(k, i);
-//        }
-//    }
+    //    #[test]
+    //    fn add_and_look_up() {
+    //        let mut db = DB::new(0);
+    //        for i in 0..100 {
+    //            db.add(Robj::create_string_object_from_long(i),
+    //                   Robj::create_string_object_from_long(i));
+    //        }
+    //        for i in 0..100 {
+    //            let r: &RobjPtr =
+    //                db.look_up(&Robj::create_string_object_from_long(i)).unwrap();
+    //            let k = r.borrow().object_to_long().unwrap();
+    //            assert_eq!(k, i);
+    //        }
+    //    }
 }

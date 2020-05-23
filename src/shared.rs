@@ -12,8 +12,10 @@ thread_local!(
     pub static EMPTY_MULTI_BULK: RobjPtr = Robj::create_string_object("*0\r\n");
     pub static PONG: RobjPtr = Robj::create_string_object("+PONG\r\n");
     pub static COLON: RobjPtr = Robj::create_string_object(":");
-    pub static WRONG_TYPE: RobjPtr = Robj::create_string_object("-WRONGTYPE Operation \
-        against a key holding the wrong kind of value\r\n");
+    pub static WRONG_TYPE: RobjPtr = Robj::create_string_object(
+        "-WRONGTYPE Operation \
+        against a key holding the wrong kind of value\r\n",
+    );
 );
 
 #[macro_export]
@@ -26,8 +28,3 @@ macro_rules! shared_object {
         )*
     };
 }
-
-
-
-
-

@@ -1,28 +1,29 @@
-use log::LevelFilter;
-use std::fs::{File, OpenOptions};
 use crate::ae::*;
-use mio::net::TcpListener;
-use mio::net;
-use std::rc::Rc;
-use std::cell::RefCell;
-use crate::client::{Client, ReplyState, CLIENT_MASTER, CLIENT_SLAVE, CLIENT_MONITOR, CLIENT_CLOSE_ASAP};
+use crate::client::{
+    Client, ReplyState, CLIENT_CLOSE_ASAP, CLIENT_MASTER, CLIENT_MONITOR, CLIENT_SLAVE,
+};
 use crate::db::DB;
 use crate::env::Config;
-use std::net::SocketAddr;
-use std::time::SystemTime;
 use crate::object::linked_list::LinkedList;
-use crate::{zalloc, rdb};
 use crate::object::RobjPtr;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::error::Error;
-use std::io::{Write, BufReader, BufRead, Read};
 use crate::util::*;
+use crate::{rdb, zalloc};
+use log::LevelFilter;
+use mio::net;
+use mio::net::TcpListener;
 use rand::prelude::*;
-use std::fs;
-use std::process::exit;
 use rlua::Lua;
-
+use std::cell::RefCell;
+use std::error::Error;
+use std::fs;
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::SocketAddr;
+use std::process::exit;
+use std::rc::Rc;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use std::time::SystemTime;
 
 pub struct Server {
     pub port: u16,
@@ -72,7 +73,9 @@ pub struct Server {
 
 impl Server {
     pub fn new(config: &Config) -> Server {
-        let addr: SocketAddr = format!("{}:{}", config.bind_addr, config.port).parse().unwrap();
+        let addr: SocketAddr = format!("{}:{}", config.bind_addr, config.port)
+            .parse()
+            .unwrap();
         let server = TcpListener::bind(&addr).unwrap_or_else(|e| {
             eprintln!("Error bind address {:?}: {}", addr, e);
             exit(1);
@@ -97,6 +100,38 @@ impl Server {
             _ => ReplyState::None,
         };
 
+        Self::new_server(config, fd, db, log_file, reply_state, shutdown_asap)
+    }
+
+    pub fn new_handle(config: &Config) -> Server {
+        let fd = Rc::new(RefCell::new(Fdp::Nil));
+
+        let mut db: Vec<DB> = Vec::with_capacity(config.db_num);
+        for i in 0..config.db_num {
+            db.push(DB::new(i));
+        }
+
+        let log_file = None;
+
+        let shutdown_asap = Arc::new(AtomicBool::new(false));
+        set_up_signal_handling(&shutdown_asap);
+
+        let reply_state = match config.master_host {
+            Some(_) => ReplyState::Connect,
+            _ => ReplyState::None,
+        };
+
+        Self::new_server(config, fd, db, log_file, reply_state, shutdown_asap)
+    }
+
+    fn new_server(
+        config: &Config,
+        fd: Fd,
+        db: Vec<DB>,
+        log_file: Option<File>,
+        reply_state: ReplyState,
+        shutdown_asap: Arc<AtomicBool>,
+    ) -> Server {
         Server {
             port: config.port,
             fd,
@@ -143,24 +178,20 @@ impl Server {
     }
 
     pub fn free_client(&mut self, c: &Rc<RefCell<Client>>) {
-        self.clients.delete_first_n_filter(self.clients.len(), |x| {
-            Rc::ptr_eq(&c, x)
-        });
+        self.clients
+            .delete_first_n_filter(self.clients.len(), |x| Rc::ptr_eq(&c, x));
     }
 
     pub fn free_client_with_flags(&mut self, c: &Rc<RefCell<Client>>, flags: i32) {
-        self.clients.delete_first_n_filter(self.clients.len(), |x| {
-            Rc::ptr_eq(&c, x)
-        });
+        self.clients
+            .delete_first_n_filter(self.clients.len(), |x| Rc::ptr_eq(&c, x));
         if flags & CLIENT_SLAVE != 0 {
             let list = if c.borrow().flags & CLIENT_MONITOR != 0 {
                 &mut self.monitors
             } else {
                 &mut self.slaves
             };
-            list.delete_first_n_filter(list.len(), |x| {
-                Rc::ptr_eq(&c, x)
-            });
+            list.delete_first_n_filter(list.len(), |x| Rc::ptr_eq(&c, x));
         }
         if flags & CLIENT_MASTER != 0 {
             self.master = None;
@@ -170,18 +201,14 @@ impl Server {
 
     pub fn free_client_by_ref(&mut self, c: &Client) {
         let ptr = c as *const Client;
-        self.clients.delete_first_n_filter(1, |x| {
-            ptr == x.as_ptr()
-        });
+        self.clients.delete_first_n_filter(1, |x| ptr == x.as_ptr());
         if c.flags & CLIENT_SLAVE != 0 {
             let list = if c.flags & CLIENT_MONITOR != 0 {
                 &mut self.monitors
             } else {
                 &mut self.slaves
             };
-            list.delete_first_n_filter(list.len(), |x| {
-                ptr == x.as_ptr()
-            });
+            list.delete_first_n_filter(list.len(), |x| ptr == x.as_ptr());
         }
         if c.flags & CLIENT_MASTER != 0 {
             self.master = None;
@@ -192,14 +219,15 @@ impl Server {
     fn free_client_by_ptr(&mut self, ptr: *const Client) -> Rc<RefCell<Client>> {
         // only used in server_cron
         // TODO: this can be improved
-        let client_rc = self.clients.iter()
+        let client_rc = self
+            .clients
+            .iter()
             .find(|x| ptr == x.as_ptr())
             .map(|x| Rc::clone(x))
             .unwrap();
 
-        self.clients.delete_first_n_filter(1, |x| {
-            Rc::ptr_eq(&client_rc, x)
-        });
+        self.clients
+            .delete_first_n_filter(1, |x| Rc::ptr_eq(&client_rc, x));
 
         {
             let c = client_rc.borrow();
@@ -209,9 +237,7 @@ impl Server {
                 } else {
                     &mut self.slaves
                 };
-                list.delete_first_n_filter(list.len(), |x| {
-                    ptr == x.as_ptr()
-                });
+                list.delete_first_n_filter(list.len(), |x| ptr == x.as_ptr());
             }
             if c.flags & CLIENT_MASTER != 0 {
                 self.master = None;
@@ -263,10 +289,10 @@ impl Server {
         let len = self.clients.len();
         let max_idle_time = self.max_idle_time;
         self.clients.delete_first_n_filter(len, |x| {
-            let elapsed =
-                now.duration_since(x.borrow().last_interaction)
-                    .unwrap()
-                    .as_secs() as usize;
+            let elapsed = now
+                .duration_since(x.borrow().last_interaction)
+                .unwrap()
+                .as_secs() as usize;
             if elapsed > max_idle_time {
                 true
             } else {
@@ -366,11 +392,10 @@ impl Server {
             e
         })?;
         let line_buf = line_buf.trim();
-        let mut dump_size =
-            bytes_to_usize(&line_buf.as_bytes()[1..]).map_err(|e| {
-                warn!("Error parsing dump size: {}", e);
-                e
-            })?;
+        let mut dump_size = bytes_to_usize(&line_buf.as_bytes()[1..]).map_err(|e| {
+            warn!("Error parsing dump size: {}", e);
+            e
+        })?;
         info!("Receiving {} bytes data dump from MASTER", dump_size);
 
         let temp_file = format!(
@@ -385,8 +410,10 @@ impl Server {
                 .write(true)
                 .open(&temp_file)
                 .map_err(|e| {
-                    warn!("Opening the temp file needed for MASTER <-> SLAVE synchronization: {}",
-                          e);
+                    warn!(
+                        "Opening the temp file needed for MASTER <-> SLAVE synchronization: {}",
+                        e
+                    );
                     e
                 })?;
 
@@ -397,8 +424,11 @@ impl Server {
                     e
                 })?;
                 file.write_all(buf).map_err(|e| {
-                    warn!("Write error writing to the DB dump file needed for MASTER <-> \
-                       SLAVE synchronization: {}", e);
+                    warn!(
+                        "Write error writing to the DB dump file needed for MASTER <-> \
+                       SLAVE synchronization: {}",
+                        e
+                    );
                     e
                 })?;
                 dump_size -= buf.len();
@@ -406,8 +436,11 @@ impl Server {
         }
 
         fs::rename(&temp_file, &self.db_filename).map_err(|e| {
-            warn!("Failed trying to rename the temp DB into dump.rdb \
-                   in MASTER <-> SLAVE synchronization: {}", e);
+            warn!(
+                "Failed trying to rename the temp DB into dump.rdb \
+                   in MASTER <-> SLAVE synchronization: {}",
+                e
+            );
             let _ = fs::remove_file(&temp_file);
             e
         })?;
@@ -442,22 +475,10 @@ impl Server {
 }
 
 fn set_up_signal_handling(sig_term_sign: &Arc<AtomicBool>) {
-    signal_hook::flag::register(
-        signal_hook::SIGTERM,
-        Arc::clone(sig_term_sign),
-    ).unwrap();
-    signal_hook::flag::register(
-        signal_hook::SIGINT,
-        Arc::clone(sig_term_sign),
-    ).unwrap();
+    signal_hook::flag::register(signal_hook::SIGTERM, Arc::clone(sig_term_sign)).unwrap();
+    signal_hook::flag::register(signal_hook::SIGINT, Arc::clone(sig_term_sign)).unwrap();
     // ignore SIGPIPE and SIGHUP
     let useless_flag = Arc::new(AtomicBool::new(false));
-    signal_hook::flag::register(
-        signal_hook::SIGPIPE,
-        Arc::clone(&useless_flag),
-    ).unwrap();
-    signal_hook::flag::register(
-        signal_hook::SIGHUP,
-        useless_flag,
-    ).unwrap();
+    signal_hook::flag::register(signal_hook::SIGPIPE, Arc::clone(&useless_flag)).unwrap();
+    signal_hook::flag::register(signal_hook::SIGHUP, useless_flag).unwrap();
 }

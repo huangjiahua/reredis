@@ -1,20 +1,20 @@
-use crate::server::Server;
-use std::io;
-use std::io::{Write, BufWriter, BufReader, Read};
-use std::fs::{File, OpenOptions, rename};
 use crate::db::DB;
-use crate::object::{RobjPtr, RobjEncoding, RobjType, Robj};
-use std::time::SystemTime;
-use crate::util::{unix_timestamp, to_system_time};
-use std::rc::Rc;
-use crate::object::linked_list::LinkedList;
-use crate::object::dict::Dict;
 use crate::hash;
-use rand::Rng;
-use std::os::unix::io::AsRawFd;
-use nix::unistd::{fork, ForkResult, Pid};
+use crate::object::dict::Dict;
+use crate::object::linked_list::LinkedList;
+use crate::object::{Robj, RobjEncoding, RobjPtr, RobjType};
+use crate::server::Server;
+use crate::util::{to_system_time, unix_timestamp};
 use nix::sys::ptrace::kill;
+use nix::unistd::{fork, ForkResult, Pid};
+use rand::Rng;
+use std::fs::{rename, File, OpenOptions};
+use std::io;
+use std::io::{BufReader, BufWriter, Read, Write};
+use std::os::unix::io::AsRawFd;
 use std::process::exit;
+use std::rc::Rc;
+use std::time::SystemTime;
 
 const RDB_DB_SELECT_FLAG: u8 = 0xFE;
 const RDB_DB_END_FLAG: u8 = 0xFF;
@@ -107,8 +107,7 @@ trait RdbWriter: io::Write {
         self.write_all(RDB_SELECT_DB)?;
         self.dump_length(db.id)?;
         for (k, v) in db.dict.iter() {
-            let exp = db.expires.find(k)
-                .map(|p| p.1);
+            let exp = db.expires.find(k).map(|p| p.1);
             self.dump_key_value(k, v, exp)?;
         }
         Ok(())
@@ -123,9 +122,7 @@ trait RdbWriter: io::Write {
             self.write_all(&bytes)?;
         } else if size < std::u32::MAX as usize {
             let bytes: [u8; 4] = (size as u32).to_le_bytes();
-            let encoded: [u8; 5] = [
-                0b1000_0000, bytes[0], bytes[1], bytes[2], bytes[3]
-            ];
+            let encoded: [u8; 5] = [0b1000_0000, bytes[0], bytes[1], bytes[2], bytes[3]];
             self.write_all(&encoded)?;
         } else {
             return Err(io::Error::new(
@@ -163,8 +160,8 @@ trait RdbWriter: io::Write {
     }
 
     fn dump_object(&mut self, obj: &RobjPtr) -> io::Result<()> {
-        use RobjType::*;
         use RobjEncoding::*;
+        use RobjType::*;
         match (obj.borrow().object_type(), obj.borrow().encoding()) {
             (String, _) => self.dump_string(obj)?,
             (List, LinkedList) => self.dump_list(obj)?,
@@ -283,11 +280,8 @@ fn value_type_flag(o: &RobjPtr) -> u8 {
     }
 }
 
-
 pub fn rdb_load(server: &mut Server) -> io::Result<()> {
-    let file = OpenOptions::new()
-        .read(true)
-        .open(&server.db_filename)?;
+    let file = OpenOptions::new().read(true).open(&server.db_filename)?;
 
     let mut buf: [u8; 9] = [0; 9];
     let mut reader = BufReader::new(file);
@@ -406,9 +400,7 @@ trait RdbReader: io::Read {
     fn load_string_object(&mut self) -> io::Result<RobjPtr> {
         let prefix = self.load_length_or_integer()?;
         match prefix {
-            LengthOrInteger::Int(i) => {
-                Ok(Robj::create_int_object(i))
-            }
+            LengthOrInteger::Int(i) => Ok(Robj::create_int_object(i)),
             LengthOrInteger::Len(l) => {
                 let mut buf: Vec<u8> = vec![0; l];
                 self.load_n_bytes(&mut buf)?;
@@ -440,7 +432,7 @@ trait RdbReader: io::Read {
                 return Ok(LengthOrInteger::Len(len as usize));
             }
             0b0011 => {}
-            _ => unreachable!()
+            _ => unreachable!(),
         }
 
         match flag & 0b0000_0011 {
@@ -479,7 +471,7 @@ trait RdbReader: io::Read {
             RDB_INTSET_FLAG => self.load_int_set_object(),
             RDB_ZSET_ZIPLIST_FLAG => self.load_zset_ziplist_object(),
             RDB_HASH_ZIPLIST_FLAG => self.load_hash_ziplist_object(),
-            _ => Err(other_io_err("No such value type"))
+            _ => Err(other_io_err("No such value type")),
         }
     }
 

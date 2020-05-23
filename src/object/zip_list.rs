@@ -1,8 +1,8 @@
-use std::mem;
+use crate::util::bytes_to_i64;
 use std::iter::Chain;
 use std::iter::Cloned;
+use std::mem;
 use std::slice;
-use crate::util::bytes_to_i64;
 
 const ZIP_LIST_I16_ENC: u8 = 0b1100_0000;
 const ZIP_LIST_I32_ENC: u8 = 0b1101_0000;
@@ -139,8 +139,10 @@ impl Encoding {
         }
     }
 
-    fn iter_with_content<'a>(&'a self, content: &'a [u8])
-                             -> Chain<EncodingIter, Cloned<slice::Iter<u8>>> {
+    fn iter_with_content<'a>(
+        &'a self,
+        content: &'a [u8],
+    ) -> Chain<EncodingIter, Cloned<slice::Iter<u8>>> {
         match self {
             Self::Str(_) => self.iter().chain(content.iter().cloned()),
             Self::Int(_) => self.iter().chain("".as_bytes().iter().cloned()),
@@ -193,11 +195,7 @@ impl Encoding {
                 return Self::Int(k as i64);
             }
         };
-        let mut v = if x[1] >> 7 == 1 {
-            -1i64
-        } else {
-            0i64
-        };
+        let mut v = if x[1] >> 7 == 1 { -1i64 } else { 0i64 };
         for i in 0..sz {
             v <<= 8;
             v |= x[i + 1] as i64;
@@ -279,7 +277,6 @@ impl Iterator for LengthIter {
     }
 }
 
-
 struct EncodingIter {
     enc: Encoding,
     curr: usize,
@@ -323,9 +320,7 @@ impl<'a> PartialEq<&[u8]> for ZipListValue<'a> {
     fn eq(&self, other: &&[u8]) -> bool {
         match self {
             ZipListValue::Bytes(b) => *b == *other,
-            ZipListValue::Int(i) => {
-                i.to_string().as_bytes() == *other
-            }
+            ZipListValue::Int(i) => i.to_string().as_bytes() == *other,
         }
     }
 }
@@ -368,12 +363,12 @@ impl<'a> Node<'a> {
     fn value(&self) -> ZipListValue<'a> {
         match self.encoding {
             Encoding::Int(i) => ZipListValue::Int(i),
-            Encoding::Str(sz) =>
-                ZipListValue::Bytes(&self.content[self.header_size()..self.header_size() + sz]),
+            Encoding::Str(sz) => {
+                ZipListValue::Bytes(&self.content[self.header_size()..self.header_size() + sz])
+            }
         }
     }
 }
-
 
 pub struct ZipListNodeMut<'a> {
     list: &'a mut ZipList,
@@ -434,7 +429,9 @@ impl<'a> ZipListNodeMut<'a> {
     }
 
     pub fn delete_first_n_filter<F>(mut self, mut n: usize, f: F) -> ZipListNodeMut<'a>
-        where F: Fn(&ZipListValue) -> bool {
+    where
+        F: Fn(&ZipListValue) -> bool,
+    {
         while !self.at_end() {
             if f(&self.value()) {
                 self = self.delete();
@@ -450,7 +447,9 @@ impl<'a> ZipListNodeMut<'a> {
     }
 
     pub fn delete_last_n_filter<F>(mut self, mut n: usize, f: F) -> ZipListNodeMut<'a>
-        where F: Fn(&ZipListValue) -> bool {
+    where
+        F: Fn(&ZipListValue) -> bool,
+    {
         loop {
             if n == 0 {
                 break;
@@ -510,15 +509,10 @@ impl<'a> Iterator for IterRev<'a> {
             return None;
         }
         let prev_len = decode_prev_length(&self.list.0[off..]);
-        self.off = if prev_len == 0 {
-            0
-        } else {
-            off - prev_len
-        };
+        self.off = if prev_len == 0 { 0 } else { off - prev_len };
         Some(Node::new(&self.list.0[off..]).value())
     }
 }
-
 
 // ZipList
 // | tail offset: sizeof(usize) | number of nodes: sizeof(u16) | node 1 | node 2 | ... | node N |
@@ -549,8 +543,7 @@ impl ZipList {
     }
 
     pub fn len(&self) -> usize {
-        let l = self.get_usize_value(ZIP_LIST_TAIL_OFF_SIZE,
-                                     ZIP_LIST_LEN_SIZE);
+        let l = self.get_usize_value(ZIP_LIST_TAIL_OFF_SIZE, ZIP_LIST_LEN_SIZE);
         assert!(l < std::u16::MAX as usize);
         l
     }
@@ -632,10 +625,7 @@ impl ZipList {
     }
 
     pub fn get_node_mut(&mut self, off: usize) -> ZipListNodeMut {
-        ZipListNodeMut {
-            list: self,
-            off,
-        }
+        ZipListNodeMut { list: self, off }
     }
 
     fn set_usize_value(&mut self, value: usize, off: usize, n: usize) {
@@ -711,7 +701,7 @@ impl ZipList {
         // TODO: can write the data here
         self.0.splice(
             off..off,
-            (0..(req_len as i64 + next_diff) as usize).map(|_| { 0u8 }),
+            (0..(req_len as i64 + next_diff) as usize).map(|_| 0u8),
         );
 
         if off != old_len {
@@ -735,10 +725,7 @@ impl ZipList {
 
         write_prev_length(prev_len, &mut self.0[off..off + prev_len_size]);
         let off = off + prev_len_size;
-        encoding.write_with_content(
-            &mut self.0[off..off + encoding.blob_len_with_content()],
-            s,
-        );
+        encoding.write_with_content(&mut self.0[off..off + encoding.blob_len_with_content()], s);
 
         self.incr_len(1);
     }
@@ -763,10 +750,8 @@ impl ZipList {
 
             if next_prev_raw_len_size < raw_len_size {
                 let extra: usize = raw_len_size - next_prev_raw_len_size;
-                self.0.splice(
-                    off + raw_len..off + raw_len,
-                    (0..extra).map(|_| 0u8),
-                );
+                self.0
+                    .splice(off + raw_len..off + raw_len, (0..extra).map(|_| 0u8));
 
                 let next_off: usize = off + raw_len;
                 if next_off != self.get_tail_offset() {
@@ -802,7 +787,9 @@ impl ZipList {
         let mut next_diff: i64 = 0;
 
         for _ in 0..num {
-            if next_off == self.0.len() { break; }
+            if next_off == self.0.len() {
+                break;
+            }
             next_off += Node::parse_blob_len(&self.0[next_off..]);
             deleted += 1;
         }
@@ -811,8 +798,8 @@ impl ZipList {
             if next_off != self.0.len() {
                 let first_prev_len: usize = decode_prev_length(&self.0[off..]);
                 let next_prev_len: usize = decode_prev_length(&self.0[next_off..]);
-                next_diff = prev_length_size(first_prev_len) as i64 -
-                    prev_length_size(next_prev_len) as i64;
+                next_diff = prev_length_size(first_prev_len) as i64
+                    - prev_length_size(next_prev_len) as i64;
 
                 next_off = (next_off as i64 - next_diff as i64) as usize;
 
@@ -821,13 +808,9 @@ impl ZipList {
                     &mut self.0[next_off..next_off + prev_length_size(first_prev_len)],
                 );
 
-                self.set_tail_offset(
-                    self.get_tail_offset() - (next_off - off)
-                );
+                self.set_tail_offset(self.get_tail_offset() - (next_off - off));
             } else {
-                self.set_tail_offset(
-                    off - decode_prev_length(&self.0[off..])
-                );
+                self.set_tail_offset(off - decode_prev_length(&self.0[off..]));
             }
             self.0.drain(off..next_off);
             self.set_len(self.len() - deleted);
@@ -846,7 +829,6 @@ impl ZipList {
         ZIP_LIST_HEADER_SIZE
     }
 }
-
 
 #[cfg(test)]
 mod test {

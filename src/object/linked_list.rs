@@ -1,6 +1,6 @@
-use std::mem;
-use std::marker::PhantomData;
 use std::iter::FromIterator;
+use std::marker::PhantomData;
+use std::mem;
 
 pub struct LinkedList<T> {
     head: Option<*mut Node<T>>,
@@ -138,9 +138,7 @@ impl<T> LinkedList<T> {
             }
             node
         };
-        unsafe {
-            &mut (*target)
-        }
+        unsafe { &mut (*target) }
     }
 }
 
@@ -193,15 +191,11 @@ impl<T> LinkedList<T> {
     }
 
     pub fn front(&self) -> Option<&T> {
-        unsafe {
-            self.head.as_ref().map(|node| &(**node).element)
-        }
+        unsafe { self.head.as_ref().map(|node| &(**node).element) }
     }
 
     pub fn back(&self) -> Option<&T> {
-        unsafe {
-            self.tail.as_ref().map(|node| &(**node).element)
-        }
+        unsafe { self.tail.as_ref().map(|node| &(**node).element) }
     }
 
     pub fn push_front(&mut self, elt: T) {
@@ -275,7 +269,9 @@ impl<T> LinkedList<T> {
     }
 
     pub fn delete_first_n_filter<F>(&mut self, mut n: usize, f: F)
-        where F: Fn(&T) -> bool {
+    where
+        F: Fn(&T) -> bool,
+    {
         if self.len() == 0 {
             return;
         }
@@ -299,7 +295,9 @@ impl<T> LinkedList<T> {
     }
 
     pub fn delete_last_n_filter<F>(&mut self, mut n: usize, f: F)
-        where F: Fn(&T) -> bool {
+    where
+        F: Fn(&T) -> bool,
+    {
         if self.len() == 0 {
             return;
         }
@@ -325,7 +323,7 @@ impl<T> LinkedList<T> {
 }
 
 impl<T> Extend<T> for LinkedList<T> {
-    fn extend<I: IntoIterator<Item=T>>(&mut self, iter: I) {
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for i in iter {
             self.push_back(i)
         }
@@ -333,7 +331,7 @@ impl<T> Extend<T> for LinkedList<T> {
 }
 
 impl<T> FromIterator<T> for LinkedList<T> {
-    fn from_iter<I: IntoIterator<Item=T>>(iter: I) -> Self {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let mut list = Self::new();
         for i in iter {
             list.push_back(i);
@@ -559,7 +557,7 @@ mod tests {
             fuzz_test(3);
             fuzz_test(16);
             #[cfg(not(miri))] // Miri is too slow
-                fuzz_test(189);
+            fuzz_test(189);
         }
     }
 
@@ -568,9 +566,7 @@ mod tests {
         {
             let mut m = list_from(&[1, 2, 3, 4, 5, 6]);
             check_links(&m);
-            m.delete_first_n_filter(3, |i| {
-                *i % 2 == 0
-            });
+            m.delete_first_n_filter(3, |i| *i % 2 == 0);
             check_links(&m);
             assert_eq!(m.len(), 3);
             for p in m.iter().zip([1, 3, 5].iter()) {
@@ -580,9 +576,7 @@ mod tests {
         {
             let mut m = list_from(&[1, 2, 3, 4, 5, 6]);
             check_links(&m);
-            m.delete_first_n_filter(2, |i| {
-                *i % 2 == 0
-            });
+            m.delete_first_n_filter(2, |i| *i % 2 == 0);
             check_links(&m);
             assert_eq!(m.len(), 4);
             for p in m.iter().zip([1, 3, 5, 6].iter()) {
@@ -592,9 +586,7 @@ mod tests {
         {
             let mut m = list_from(&[0, 1, 2, 3, 4, 5, 6]);
             check_links(&m);
-            m.delete_last_n_filter(4, |i| {
-                *i % 2 == 0
-            });
+            m.delete_last_n_filter(4, |i| *i % 2 == 0);
             check_links(&m);
             assert_eq!(m.len(), 3);
             for p in m.iter().zip([1, 3, 5].iter()) {
@@ -604,9 +596,7 @@ mod tests {
         {
             let mut m = list_from(&[0, 1, 2, 3, 4, 5, 6]);
             check_links(&m);
-            m.delete_last_n_filter(2, |i| {
-                *i % 2 == 0
-            });
+            m.delete_last_n_filter(2, |i| *i % 2 == 0);
             check_links(&m);
             assert_eq!(m.len(), 5);
             for p in m.iter().zip([0, 1, 2, 3, 5].iter()) {

@@ -1,7 +1,7 @@
 use crate::object::RobjPtr;
+use crate::util::bytes_to_i64;
 use std::cmp::Ordering;
 use std::ops::Range;
-use crate::util::bytes_to_i64;
 
 pub fn parse_sort_command(cmd: &[RobjPtr]) -> Result<SortInfo, SortSyntaxError> {
     let mut info = SortInfo {
@@ -64,7 +64,7 @@ pub fn parse_sort_command(cmd: &[RobjPtr]) -> Result<SortInfo, SortSyntaxError> 
                         } else {
                             i as usize
                         }
-                    },
+                    }
                     Err(_) => return Err(SortSyntaxError::LimitInvalid),
                 };
                 info.limit = Some(left..right);
@@ -116,7 +116,6 @@ pub struct SortOptions {
     pub sort_order: SortOrder,
 }
 
-
 impl SortOptions {
     pub fn sort<T>(&self, v: &mut Vec<(RobjPtr, T)>) -> Result<(), SortError> {
         if self.sort_type == SortType::Numeric && !Self::all_numeric(v) {
@@ -136,11 +135,18 @@ impl SortOptions {
     }
 
     fn numeric_lt<T>(l: &(RobjPtr, T), r: &(RobjPtr, T)) -> Ordering {
-        l.0.borrow().float().partial_cmp(&r.0.borrow().float()).unwrap()
+        l.0.borrow()
+            .float()
+            .partial_cmp(&r.0.borrow().float())
+            .unwrap()
     }
 
     fn numeric_gt<T>(l: &(RobjPtr, T), r: &(RobjPtr, T)) -> Ordering {
-        l.0.borrow().float().partial_cmp(&r.0.borrow().float()).unwrap().reverse()
+        l.0.borrow()
+            .float()
+            .partial_cmp(&r.0.borrow().float())
+            .unwrap()
+            .reverse()
     }
 
     fn alphabetic_lt<T>(l: &(RobjPtr, T), r: &(RobjPtr, T)) -> Ordering {
@@ -152,8 +158,8 @@ impl SortOptions {
     }
 
     fn get_cmp_func<T>(&self) -> CmpFn<T> {
-        use SortType::*;
         use SortOrder::*;
+        use SortType::*;
         match (self.sort_type, self.sort_order) {
             (Numeric, Asc) => Self::numeric_lt,
             (Numeric, Desc) => Self::numeric_gt,
@@ -162,4 +168,3 @@ impl SortOptions {
         }
     }
 }
-

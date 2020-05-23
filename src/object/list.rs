@@ -1,5 +1,5 @@
-use crate::object::RobjPtr;
 use crate::object::linked_list::LinkedList;
+use crate::object::RobjPtr;
 
 pub type List = LinkedList<RobjPtr>;
 

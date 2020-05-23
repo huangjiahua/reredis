@@ -1,4 +1,4 @@
-use std::alloc::{System, GlobalAlloc, Layout};
+use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 pub struct Zalloc;

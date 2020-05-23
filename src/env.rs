@@ -1,26 +1,26 @@
-use crate::server::Server;
-use crate::ae::{AE_READABLE, default_ae_event_finalizer_proc, AeEventLoop, Fd, Fdp, AE_WRITABLE};
-use std::rc::Rc;
-use chrono::Local;
-use std::io::{Write, Read, ErrorKind, SeekFrom, Seek};
-use log::{Level, LevelFilter};
-use std::cell::RefCell;
+use crate::ae::{default_ae_event_finalizer_proc, AeEventLoop, Fd, Fdp, AE_READABLE, AE_WRITABLE};
 use crate::client::*;
-use mio::net::TcpStream;
-use std::time::{Duration, SystemTime};
-use std::fs::File;
-use std::process::exit;
-use std::io;
-use crate::util::*;
-use std::env::set_current_dir;
-use std::fmt;
-use crate::zalloc;
 use crate::object::RobjEncoding;
 use crate::rdb;
+use crate::replicate;
+use crate::server::Server;
+use crate::util::*;
+use crate::zalloc;
+use chrono::Local;
+use log::{Level, LevelFilter};
+use mio::net::TcpStream;
 use nix::sys::wait::*;
 use nix::unistd::Pid;
-use crate::replicate;
+use std::cell::RefCell;
+use std::env::set_current_dir;
+use std::fmt;
+use std::fs::File;
+use std::io;
+use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::ops::Deref;
+use std::process::exit;
+use std::rc::Rc;
+use std::time::{Duration, SystemTime};
 
 pub const REREDIS_VERSION: &str = "0.0.1";
 pub const REREDIS_REQUEST_MAX_SIZE: usize = 1024 * 1024 * 256;
@@ -28,6 +28,7 @@ pub const REREDIS_MAX_WRITE_PER_EVENT: usize = 64 * 1024;
 pub const REREDIS_EXPIRE_LOOKUPS_PER_CRON: usize = 100;
 pub const REREIDS_IO_BUF_LEN: usize = 1024;
 
+#[derive(Clone)]
 pub struct Config {
     pub config_file: Option<String>,
     pub max_idle_time: usize,
@@ -100,14 +101,20 @@ impl Config {
 
         if filename != "-" {
             let mut file = File::open(filename).unwrap_or_else(|e| {
-                eprintln!("Fatal error, can't open config file {}: {}",
-                          filename, &e.to_string());
+                eprintln!(
+                    "Fatal error, can't open config file {}: {}",
+                    filename,
+                    &e.to_string()
+                );
                 exit(1);
             });
 
             file.read_to_string(&mut contents).unwrap_or_else(|e| {
-                eprintln!("Fatal error, can't read config file {}: {}",
-                          filename, &e.to_string());
+                eprintln!(
+                    "Fatal error, can't read config file {}: {}",
+                    filename,
+                    &e.to_string()
+                );
                 exit(1);
             });
         } else {
@@ -115,8 +122,10 @@ impl Config {
             let mut handle = stdin.lock();
 
             handle.read_to_string(&mut contents).unwrap_or_else(|e| {
-                eprintln!("Fatal error, can't read config from stdin: {}",
-                          &e.to_string());
+                eprintln!(
+                    "Fatal error, can't read config from stdin: {}",
+                    &e.to_string()
+                );
                 exit(1);
             });
         }
@@ -163,11 +172,10 @@ impl Config {
                     self.bind_addr = argv[1].to_string();
                 }
                 ("save", 3) => {
-                    let pair =
-                        parse_usize_pair(argv[1], argv[2]).unwrap_or_else(|e| {
-                            Self::load_error(i, line, &e.to_string());
-                            (0, 0)
-                        });
+                    let pair = parse_usize_pair(argv[1], argv[2]).unwrap_or_else(|e| {
+                        Self::load_error(i, line, &e.to_string());
+                        (0, 0)
+                    });
                     self.save_params.push(pair);
                 }
                 ("dir", 2) => {
@@ -176,17 +184,16 @@ impl Config {
                         exit(1);
                     });
                 }
-                ("loglevel", 2) => {
-                    match argv[1] {
-                        "debug" => self.log_level = LevelFilter::Debug,
-                        "notice" => self.log_level = LevelFilter::Info,
-                        "warning" => self.log_level = LevelFilter::Warn,
-                        _ => Self::load_error(
-                            i, line,
-                            "Invalid log level. Must be one of debug, notice, warning",
-                        ),
-                    }
-                }
+                ("loglevel", 2) => match argv[1] {
+                    "debug" => self.log_level = LevelFilter::Debug,
+                    "notice" => self.log_level = LevelFilter::Info,
+                    "warning" => self.log_level = LevelFilter::Warn,
+                    _ => Self::load_error(
+                        i,
+                        line,
+                        "Invalid log level. Must be one of debug, notice, warning",
+                    ),
+                },
                 ("logfile", 2) => {
                     self.log_file = Some(argv[1].to_string());
                     if argv[1].eq_ignore_ascii_case("stdout") {
@@ -213,11 +220,10 @@ impl Config {
                     });
                 }
                 ("maxmemory", 2) => {
-                    let max_memory: usize =
-                        human_size(argv[1]).unwrap_or_else(|_| {
-                            Self::load_error(i, line, "cannot parse size");
-                            0
-                        });
+                    let max_memory: usize = human_size(argv[1]).unwrap_or_else(|_| {
+                        Self::load_error(i, line, "cannot parse size");
+                        0
+                    });
                     self.max_memory = max_memory;
                 }
                 ("slaveof", 3) => {
@@ -246,8 +252,10 @@ impl Config {
                     self.db_filename = argv[1].to_string();
                 }
                 (_, _) => {
-                    println!("Warning: '{}' is not supported or argument number is incorrect",
-                             main);
+                    println!(
+                        "Warning: '{}' is not supported or argument number is incorrect",
+                        main
+                    );
                 }
             }
         }
@@ -271,10 +279,7 @@ impl Env {
     pub fn new(config: &Config) -> Env {
         let server = Server::new(config);
         let el = AeEventLoop::new(512);
-        Env {
-            server,
-            el,
-        }
+        Env { server, el }
     }
 
     pub fn reset_server_save_params(&mut self) {}
@@ -330,16 +335,15 @@ fn level_to_sign(level: Level) -> &'static str {
 pub fn init_logger(level: log::LevelFilter) {
     let mut builder = env_logger::Builder::new();
     builder.filter_level(level);
-    builder.format(
-        |buf, record|
-            writeln!(
-                buf,
-                "{} {} {}",
-                Local::now().format("%d %b %H:%M:%S"),
-                level_to_sign(record.level()),
-                record.args()
-            )
-    );
+    builder.format(|buf, record| {
+        writeln!(
+            buf,
+            "{} {} {}",
+            Local::now().format("%d %b %H:%M:%S"),
+            level_to_sign(record.level()),
+            record.args()
+        )
+    });
 
     builder.init();
 }
@@ -366,9 +370,7 @@ pub fn accept_handler(
     };
     debug!("Accepted {}:{}", info.ip(), info.port());
 
-    let c = match Client::with_fd_and_el(
-        Rc::new(RefCell::new(Fdp::Stream(stream))
-        ), el) {
+    let c = match Client::with_fd_and_el(Rc::new(RefCell::new(Fdp::Stream(stream))), el) {
         Err(()) => {
             warn!("Error allocation resources for the client");
             return;
@@ -431,14 +433,14 @@ pub fn read_query_from_client(
 
         let read_len = REREIDS_IO_BUF_LEN;
 
-
         curr_len = client.query_buf.len();
         client.query_buf.resize(curr_len + read_len, 0u8);
 
         n_read = match socket.read(&mut client.query_buf[curr_len..]) {
             Ok(n) => n,
             Err(e) => {
-                if let ErrorKind::WouldBlock = e.kind() {} else {
+                if let ErrorKind::WouldBlock = e.kind() {
+                } else {
                     debug!("Reading from client: {}", e);
                     free_active_client(server, el, client.deref(), socket);
                 }
@@ -486,9 +488,7 @@ pub fn send_reply_to_client(
     let mut fd_ref = fd.as_ref().borrow_mut();
     let stream = fd_ref.unwrap_stream_mut();
 
-    for rep in client.reply
-        .iter()
-        .map(|x| x.borrow()) {
+    for rep in client.reply.iter().map(|x| x.borrow()) {
         let (write_result, n) = match rep.encoding() {
             RobjEncoding::Int => {
                 let s = rep.integer().to_string();
@@ -497,10 +497,18 @@ pub fn send_reply_to_client(
             _ => (stream.write_all(rep.string()), rep.string().len()),
         };
         match write_result {
-            Err(e) => if e.kind() != ErrorKind::WouldBlock {
-                debug!("Error writing to client: {}", e);
-                free_client_occupied_in_el(server, el, data.unwrap_client(), stream, client.flags);
-                return;
+            Err(e) => {
+                if e.kind() != ErrorKind::WouldBlock {
+                    debug!("Error writing to client: {}", e);
+                    free_client_occupied_in_el(
+                        server,
+                        el,
+                        data.unwrap_client(),
+                        stream,
+                        client.flags,
+                    );
+                    return;
+                }
             }
             Ok(_) => written_bytes += n,
         }
@@ -558,9 +566,7 @@ pub fn send_bulk_to_slave(
                 free_client_occupied_in_el(server, el, client_ptr, stream, flags);
                 return;
             }
-            Ok(size) => {
-                size
-            }
+            Ok(size) => size,
         };
         if let Err(e) = stream.write_all(&buf[..buf_len]) {
             warn!("Write error sending DB to slave: {}", e);
@@ -579,12 +585,7 @@ pub fn send_bulk_to_slave(
     }
 }
 
-pub fn server_cron(
-    server: &mut Server,
-    el: &mut AeEventLoop,
-    _id: i64,
-    _data: &ClientData,
-) -> i32 {
+pub fn server_cron(server: &mut Server, el: &mut AeEventLoop, _id: i64, _data: &ClientData) -> i32 {
     server.cron_loops += 1;
 
     // update global state with the amount of used memory
@@ -599,14 +600,20 @@ pub fn server_cron(
         let vkeys: usize = db.expires.len();
 
         if loops % 5 == 0 && (used != 0 || vkeys != 0) {
-            debug!("DB {}: {} keys ({} volatile) in {} slots HT.", i, used, vkeys, slot);
+            debug!(
+                "DB {}: {} keys ({} volatile) in {} slots HT.",
+                i, used, vkeys, slot
+            );
         }
     }
 
     // show information about connected clients
     if loops % 5 == 0 {
-        debug!("{} clients connected, {} bytes in use",
-               server.clients.len(), server.used_memory);
+        debug!(
+            "{} clients connected, {} bytes in use",
+            server.clients.len(),
+            server.used_memory
+        );
     }
 
     // close connections of timeout clients
@@ -647,10 +654,9 @@ pub fn server_cron(
     } else {
         let now = SystemTime::now();
         for (seconds, changes) in server.save_params.iter() {
-            if server.dirty >= *changes &&
-                now.duration_since(server.last_save)
-                    .unwrap()
-                    .as_secs() as usize > *seconds {
+            if server.dirty >= *changes
+                && now.duration_since(server.last_save).unwrap().as_secs() as usize > *seconds
+            {
                 let _ = rdb::rdb_save_in_background(server);
                 break;
             }

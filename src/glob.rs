@@ -209,4 +209,3 @@ mod test {
         case_not_match("[^-]", "-");
     }
 }
-

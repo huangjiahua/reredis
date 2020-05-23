@@ -1,4 +1,4 @@
-use crate::object::{RobjPtr, Robj};
+use crate::object::{Robj, RobjPtr};
 use crate::util::bytes_to_usize;
 
 pub struct DecodeIter<'a> {
@@ -22,7 +22,9 @@ impl<'a> Iterator for DecodeIter<'a> {
         if self.idx + 1 >= self.raw.len() || self.raw[self.idx] != '$' as u8 {
             return Some(Err(()));
         }
-        let i = self.raw.iter()
+        let i = self
+            .raw
+            .iter()
             .enumerate()
             .skip(self.idx + 1)
             .find(|x| *x.1 == '\r' as u8)
@@ -32,7 +34,6 @@ impl<'a> Iterator for DecodeIter<'a> {
             None => return Some(Err(())),
             Some(n) => n,
         };
-
 
         let len = &self.raw[self.idx + 1..i];
         let len: usize = match bytes_to_usize(len) {
@@ -69,7 +70,8 @@ pub fn decode(raw: &[u8]) -> Result<DecodeIter, ()> {
     if raw[0] != '*' as u8 {
         return Err(());
     }
-    let i = raw.iter()
+    let i = raw
+        .iter()
         .enumerate()
         .find(|x| *x.1 == '\r' as u8)
         .map(|x| x.0);
@@ -114,9 +116,7 @@ mod test {
     }
 
     fn check_right_decode(raw: &[u8], expected: &[&str]) {
-        let argv: Vec<RobjPtr> = decode(raw).unwrap()
-            .map(|x| x.unwrap())
-            .collect();
+        let argv: Vec<RobjPtr> = decode(raw).unwrap().map(|x| x.unwrap()).collect();
         assert_eq!(argv.len(), expected.len());
         equal(&argv, expected);
     }
@@ -126,8 +126,7 @@ mod test {
     }
 
     fn assert_nth_err(raw: &[u8], n: usize) {
-        let argv: Vec<Result<RobjPtr, ()>> = decode(raw).unwrap()
-            .collect();
+        let argv: Vec<Result<RobjPtr, ()>> = decode(raw).unwrap().collect();
         assert_eq!(argv.len(), n + 1);
         for i in 0..n {
             assert!(argv[i].is_ok());
@@ -150,7 +149,8 @@ mod test {
         check_right_decode(cmd, &["set", "val"]);
 
         let cmd = "*5\r\n$5\r\nLPUSH\r\n\
-        $4\r\nlist\r\n$1\r\na\r\n$1\r\nb\r\n$2\r\nab\r\n".as_bytes();
+        $4\r\nlist\r\n$1\r\na\r\n$1\r\nb\r\n$2\r\nab\r\n"
+            .as_bytes();
         check_right_decode(cmd, &["LPUSH", "list", "a", "b", "ab"]);
 
         let cmd = "*0\r\n".as_bytes();
@@ -168,24 +168,12 @@ mod test {
         fail_to_parse("*0\r".as_bytes());
         fail_to_parse("*-1\r\n".as_bytes());
 
-        assert_nth_err(
-            "*1\r\n$6\r\nCOMMAND\r\n".as_bytes(),
-            0,
-        );
+        assert_nth_err("*1\r\n$6\r\nCOMMAND\r\n".as_bytes(), 0);
 
-        assert_nth_err(
-            "*2\r\n$2\r\nget\r\n$2\r\nti\r\n".as_bytes(),
-            0,
-        );
+        assert_nth_err("*2\r\n$2\r\nget\r\n$2\r\nti\r\n".as_bytes(), 0);
 
-        assert_nth_err(
-            "*1\r\n$8\r\nCOMMAND\r\n".as_bytes(),
-            0,
-        );
+        assert_nth_err("*1\r\n$8\r\nCOMMAND\r\n".as_bytes(), 0);
 
-        assert_nth_err(
-            "*2\r\n$7\r\nCOMMAND\r\n".as_bytes(),
-            1,
-        );
+        assert_nth_err("*2\r\n$7\r\nCOMMAND\r\n".as_bytes(), 1);
     }
 }

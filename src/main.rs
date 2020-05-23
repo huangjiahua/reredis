@@ -2,7 +2,7 @@
 extern crate log;
 extern crate env_logger;
 
-use reredis::env::{Env, REREDIS_VERSION, init_logger, Config};
+use reredis::env::{init_logger, Config, Env, REREDIS_VERSION};
 use reredis::oom::oom;
 use reredis::zalloc::Zalloc;
 
@@ -19,9 +19,11 @@ fn main() {
     } else if args.len() > 2 {
         config.config_from_args(&args[..]);
     } else {
-        println!("no config file specified, using the default config. \
+        println!(
+            "no config file specified, using the default config. \
             In order to specify a config file use 'reredis-server \
-            /path/to/reredis.conf'");
+            /path/to/reredis.conf'"
+        );
     }
 
     let mut env = Env::new(&config);
@@ -42,7 +44,10 @@ fn main() {
         oom("creating file event");
     }
 
-    info!("The server is now ready to accept connections on port {}", env.server.port);
+    info!(
+        "The server is now ready to accept connections on port {}",
+        env.server.port
+    );
 
     env.ae_main();
 }

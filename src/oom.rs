@@ -1,7 +1,7 @@
 use std::io::Write;
-use std::time::Duration;
-use std::thread::sleep;
 use std::process::abort;
+use std::thread::sleep;
+use std::time::Duration;
 
 pub fn oom(s: &str) {
     write!(&mut std::io::stderr(), "{}: Out of memory\n", s).unwrap();

@@ -1,27 +1,24 @@
-use std::mem::swap;
-use std::rc::Rc;
-use crate::client::{Client, CLIENT_SLAVE, CLIENT_MONITOR, ReplyState};
-use crate::server::Server;
 use crate::ae::{AeEventLoop, Fdp};
-use crate::shared::{OK, ERR, NULL_BULK, CRLF, CZERO, CONE, COLON, WRONG_TYPE, PONG, EMPTY_MULTI_BULK};
-use crate::util::*;
-use crate::object::{Robj, RobjPtr, RobjEncoding, RobjType};
-use crate::object::list::ListWhere;
+use crate::client::{Client, ReplyState, CLIENT_MONITOR, CLIENT_SLAVE};
 use crate::glob::*;
-use rand::Rng;
-use std::time::{SystemTime, Duration};
-use crate::sort::*;
-use crate::rdb::*;
-use std::process::exit;
 use crate::lua::{to_lua, LuaRobj, RobjFromLua};
+use crate::object::list::ListWhere;
+use crate::object::{Robj, RobjEncoding, RobjPtr, RobjType};
+use crate::rdb::*;
+use crate::server::Server;
+use crate::shared::{
+    COLON, CONE, CRLF, CZERO, EMPTY_MULTI_BULK, ERR, NULL_BULK, OK, PONG, WRONG_TYPE,
+};
+use crate::sort::*;
+use crate::util::*;
+use rand::Rng;
 use std::cell::RefCell;
+use std::mem::swap;
+use std::process::exit;
+use std::rc::Rc;
+use std::time::{Duration, SystemTime};
 
-
-type CommandProc = fn(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-);
+type CommandProc = fn(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop);
 
 // Command flags
 pub const CMD_BULK: i32 = 0b0001;
@@ -42,14 +39,8 @@ enum DiffOperation {
     Union,
 }
 
-pub fn get_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
-    let r = server.db[client.db_idx].look_up_key_read(
-        &client.argv[1],
-    );
+pub fn get_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
+    let r = server.db[client.db_idx].look_up_key_read(&client.argv[1]);
 
     match r {
         None => client.add_reply(shared_object!(NULL_BULK)),
@@ -69,43 +60,23 @@ pub fn get_command(
     }
 }
 
-pub fn set_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn set_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     set_generic_command(client, server, _el, false);
 }
 
-pub fn setnx_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn setnx_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     set_generic_command(client, server, _el, true);
 }
 
-
-fn set_generic_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-    nx: bool,
-) {
+fn set_generic_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop, nx: bool) {
     let o = to_int_if_needed(&client.argv[2]);
 
     let db = &mut server.db[client.db_idx];
-    let r = db.dict.add(
-        Rc::clone(&client.argv[1]),
-        Rc::clone(&o),
-    );
+    let r = db.dict.add(Rc::clone(&client.argv[1]), Rc::clone(&o));
 
     if r.is_err() {
         if !nx {
-            db.dict.replace(
-                Rc::clone(&client.argv[1]),
-                o,
-            );
+            db.dict.replace(Rc::clone(&client.argv[1]), o);
         } else {
             client.add_reply(shared_object!(CZERO));
             return;
@@ -129,16 +100,10 @@ pub fn to_int_if_needed(o: &RobjPtr) -> RobjPtr {
     }
 }
 
-pub fn del_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn del_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
     let mut deleted: usize = 0;
-    for key in client.argv
-        .iter()
-        .skip(1) {
+    for key in client.argv.iter().skip(1) {
         if db.delete_key(key).is_ok() {
             deleted += 1;
             server.dirty += 1;
@@ -148,11 +113,7 @@ pub fn del_command(
     client.add_reply(gen_usize_reply(deleted));
 }
 
-pub fn exists_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn exists_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
     let r = match db.look_up_key_read(&client.argv[1]) {
         Some(_) => shared_object!(CONE),
@@ -161,19 +122,11 @@ pub fn exists_command(
     client.add_reply(r);
 }
 
-pub fn incr_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn incr_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     incr_decr_command(client, server, _el, 1);
 }
 
-pub fn decr_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn decr_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     incr_decr_command(client, server, _el, -1);
 }
 
@@ -216,19 +169,13 @@ pub fn incr_decr_command(
     client.add_reply(shared_object!(CRLF));
 }
 
-pub fn mget_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn mget_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let n = client.argc() - 1;
     let db = &mut server.db[client.db_idx];
     client.add_reply_from_string(format!("*{}\r\n", n));
     let mut argv: Vec<RobjPtr> = vec![];
     swap(&mut argv, &mut client.argv);
-    for key in argv
-        .iter()
-        .skip(1) {
+    for key in argv.iter().skip(1) {
         let r = db.look_up_key_read(key);
         match r {
             None => client.add_reply(shared_object!(NULL_BULK)),
@@ -243,19 +190,11 @@ pub fn mget_command(
     }
 }
 
-pub fn rpush_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn rpush_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     push_generic_command(client, server, _el, ListWhere::Tail);
 }
 
-pub fn lpush_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn lpush_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     push_generic_command(client, server, _el, ListWhere::Head);
 }
 
@@ -282,9 +221,7 @@ pub fn push_generic_command(
         return;
     }
 
-    for key in client.argv
-        .iter()
-        .skip(2) {
+    for key in client.argv.iter().skip(2) {
         list_obj.borrow_mut().list_push(Rc::clone(key), w);
     }
 
@@ -302,19 +239,11 @@ pub fn push_generic_command(
     }
 }
 
-pub fn rpop_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn rpop_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     pop_generic_command(client, server, _el, ListWhere::Tail);
 }
 
-pub fn lpop_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn lpop_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     pop_generic_command(client, server, _el, ListWhere::Head);
 }
 
@@ -349,11 +278,7 @@ fn pop_generic_command(
     }
 }
 
-pub fn llen_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn llen_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
     match db.look_up_key_read(&client.argv[1]) {
         None => client.add_reply(shared_object!(CZERO)),
@@ -367,11 +292,7 @@ pub fn llen_command(
     }
 }
 
-pub fn lindex_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn lindex_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
 
     let to_int = client.argv[2].borrow().object_to_long();
@@ -409,11 +330,7 @@ pub fn lindex_command(
     }
 }
 
-pub fn lset_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn lset_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
 
     let to_int = client.argv[2].borrow().object_to_long();
@@ -440,8 +357,10 @@ pub fn lset_command(
                     return;
                 }
 
-                match o.borrow_mut()
-                    .list_set(real_idx as usize, Rc::clone(&client.argv[3])) {
+                match o
+                    .borrow_mut()
+                    .list_set(real_idx as usize, Rc::clone(&client.argv[3]))
+                {
                     Ok(_) => client.add_reply(shared_object!(OK)),
                     Err(_) => client.add_str_reply("-ERR index out of range\r\n"),
                 }
@@ -451,16 +370,13 @@ pub fn lset_command(
     server.dirty += 1;
 }
 
-pub fn lrange_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn lrange_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
 
-    let (left, right)
-        = (client.argv[2].borrow().object_to_long(),
-           client.argv[3].borrow().object_to_long());
+    let (left, right) = (
+        client.argv[2].borrow().object_to_long(),
+        client.argv[3].borrow().object_to_long(),
+    );
 
     if left.is_err() || right.is_err() {
         client.add_str_reply("-ERR value is not an integer or out of range\r\n");
@@ -485,8 +401,7 @@ pub fn lrange_command(
 
     let len = o.borrow().list_len();
 
-    let (mut left, mut right) = (real_list_index(left, len),
-                                 real_list_index(right, len));
+    let (mut left, mut right) = (real_list_index(left, len), real_list_index(right, len));
 
     if (left < 0 && right < 0) || (left >= 0 && left as usize >= len) || left > right {
         client.add_reply(shared_object!(EMPTY_MULTI_BULK));
@@ -501,9 +416,7 @@ pub fn lrange_command(
         right = len as i64 - 1;
     }
 
-    client.add_str_reply(
-        &format!("*{}\r\n", right - left + 1)
-    );
+    client.add_str_reply(&format!("*{}\r\n", right - left + 1));
 
     for r in o.borrow().list_iter().skip(left as usize) {
         add_single_reply(client, r);
@@ -514,16 +427,13 @@ pub fn lrange_command(
     }
 }
 
-pub fn ltrim_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn ltrim_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
 
-    let (left, right)
-        = (client.argv[2].borrow().object_to_long(),
-           client.argv[3].borrow().object_to_long());
+    let (left, right) = (
+        client.argv[2].borrow().object_to_long(),
+        client.argv[3].borrow().object_to_long(),
+    );
 
     if left.is_err() || right.is_err() {
         client.add_str_reply("-ERR value is not an integer or out of range\r\n");
@@ -548,8 +458,7 @@ pub fn ltrim_command(
 
     let len = o.borrow().list_len();
 
-    let (mut left, mut right) =
-        (real_list_index(left, len), real_list_index(right, len));
+    let (mut left, mut right) = (real_list_index(left, len), real_list_index(right, len));
 
     if left > right || right < 0 || left >= len as i64 {
         o.borrow_mut().list_trim(len, len - 1);
@@ -569,11 +478,7 @@ pub fn ltrim_command(
     server.dirty += 1;
 }
 
-pub fn lrem_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn lrem_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
 
     let to_int = client.argv[2].borrow().object_to_long();
@@ -615,11 +520,7 @@ pub fn lrem_command(
     client.add_reply(gen_usize_reply(n));
 }
 
-pub fn sadd_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn sadd_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
     let mut old_len: usize = 0;
 
@@ -648,11 +549,7 @@ pub fn sadd_command(
     server.dirty += 1;
 }
 
-pub fn srem_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn srem_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
     let old_len: usize;
     let cur_len: usize;
@@ -690,11 +587,7 @@ pub fn srem_command(
     server.dirty += 1;
 }
 
-pub fn smembers_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn smembers_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
 
     let set_obj = match db.look_up_key_read(&client.argv[1]) {
@@ -718,11 +611,7 @@ pub fn smembers_command(
     }
 }
 
-pub fn smove_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn smove_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
 
     let src_set = match db.look_up_key_read(&client.argv[1]) {
@@ -740,9 +629,7 @@ pub fn smove_command(
     };
 
     let dst_set = match db.look_up_key_read(&client.argv[2]) {
-        None => {
-            None
-        }
+        None => None,
         Some(o) => {
             if !o.borrow().is_set() {
                 client.add_reply(shared_object!(WRONG_TYPE));
@@ -760,10 +647,7 @@ pub fn smove_command(
                 Some(s) => s,
                 None => {
                     let set = Robj::create_int_set_object();
-                    let _ = db.dict.add(
-                        Rc::clone(&client.argv[2]),
-                        Rc::clone(&set),
-                    );
+                    let _ = db.dict.add(Rc::clone(&client.argv[2]), Rc::clone(&set));
                     set
                 }
             };
@@ -781,11 +665,7 @@ pub fn smove_command(
     server.dirty += 1;
 }
 
-pub fn sismember_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn sismember_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
 
     let set_obj = match db.look_up_key_read(&client.argv[1]) {
@@ -810,11 +690,7 @@ pub fn sismember_command(
     }
 }
 
-pub fn scard_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn scard_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
 
     let set_obj = match db.look_up_key_read(&client.argv[1]) {
@@ -831,16 +707,10 @@ pub fn scard_command(
         }
     };
 
-    client.add_reply(gen_usize_reply(
-        set_obj.borrow().set_len()
-    ));
+    client.add_reply(gen_usize_reply(set_obj.borrow().set_len()));
 }
 
-pub fn spop_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn spop_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
     let old_len: usize;
     let deleted: usize;
@@ -864,10 +734,7 @@ pub fn spop_command(
 
     client.add_reply_from_string(format!("*{}\r\n", deleted));
     for _ in 0..deleted {
-        add_single_reply(
-            client,
-            set_obj.borrow_mut().set_pop_random(),
-        );
+        add_single_reply(client, set_obj.borrow_mut().set_pop_random());
     }
 
     if deleted == old_len {
@@ -876,19 +743,11 @@ pub fn spop_command(
     server.dirty += 1;
 }
 
-pub fn sinter_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn sinter_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     sinter_general_command(client, server, None);
 }
 
-pub fn sinterstore_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn sinterstore_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let new_set = Robj::create_int_set_object();
     let new_key = client.argv.drain(1..2).next().unwrap();
     sinter_general_command(client, server, Some(Rc::clone(&new_set)));
@@ -898,11 +757,7 @@ pub fn sinterstore_command(
     }
 }
 
-fn sinter_general_command(
-    client: &mut Client,
-    server: &mut Server,
-    mut dst: Option<RobjPtr>,
-) {
+fn sinter_general_command(client: &mut Client, server: &mut Server, mut dst: Option<RobjPtr>) {
     let db = &mut server.db[client.db_idx];
     let mut sets: Vec<RobjPtr> = Vec::with_capacity(client.argc());
 
@@ -927,9 +782,7 @@ fn sinter_general_command(
         sets.push(set_obj);
     }
 
-    sets.sort_by(|l, r| {
-        l.borrow().set_len().cmp(&r.borrow().set_len())
-    });
+    sets.sort_by(|l, r| l.borrow().set_len().cmp(&r.borrow().set_len()));
 
     let obj_ref = sets[0].borrow();
     let iter = obj_ref.set_inter_iter(&sets[1..]);
@@ -940,57 +793,38 @@ fn sinter_general_command(
     for r in iter {
         match dst.as_mut() {
             None => add_single_reply(client, r),
-            Some(set) => { let _ = set.borrow_mut().set_add(r); }
+            Some(set) => {
+                let _ = set.borrow_mut().set_add(r);
+            }
         }
         cnt += 1;
     }
 
     match dst.as_ref() {
         None => num.borrow_mut().change_to_str(&format!("*{}\r\n", cnt)),
-        Some(r) =>
-            num.borrow_mut().change_to_str(&format!(":{}\r\n", r.borrow().set_len())),
+        Some(r) => num
+            .borrow_mut()
+            .change_to_str(&format!(":{}\r\n", r.borrow().set_len())),
     }
 }
 
-pub fn sunion_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn sunion_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     sdiff_general_command(client, server, false, DiffOperation::Union);
 }
 
-pub fn sunionstore_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn sunionstore_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     sdiff_general_command(client, server, true, DiffOperation::Union);
 }
 
-pub fn sdiff_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn sdiff_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     sdiff_general_command(client, server, false, DiffOperation::Diff);
 }
 
-pub fn sdiffstore_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn sdiffstore_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     sdiff_general_command(client, server, true, DiffOperation::Diff);
 }
 
-
-fn sdiff_general_command(
-    client: &mut Client,
-    server: &mut Server,
-    dst: bool,
-    op: DiffOperation,
-) {
+fn sdiff_general_command(client: &mut Client, server: &mut Server, dst: bool, op: DiffOperation) {
     let mut sets: Vec<RobjPtr> = Vec::with_capacity(client.argc() - 1);
     let db = &mut server.db[client.db_idx];
     let mut cardinality: usize = 0;
@@ -1052,11 +886,7 @@ fn sdiff_general_command(
     }
 }
 
-pub fn incr_by_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn incr_by_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let r = client.argv[2].borrow().object_to_long();
     match r {
         Ok(n) => incr_decr_command(client, server, _el, n),
@@ -1064,11 +894,7 @@ pub fn incr_by_command(
     }
 }
 
-pub fn decr_by_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn decr_by_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let r = client.argv[2].borrow().object_to_long();
     match r {
         Ok(n) => {
@@ -1082,25 +908,16 @@ pub fn decr_by_command(
     }
 }
 
-pub fn get_set_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn get_set_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let o = to_int_if_needed(&client.argv[2]);
     get_command(client, server, _el);
     let db = &mut server.db[client.db_idx];
-    db.dict.replace(Rc::clone(&client.argv[1]),
-                    o);
+    db.dict.replace(Rc::clone(&client.argv[1]), o);
     let _ = db.remove_expire(&client.argv[1]);
     server.dirty += 1;
 }
 
-pub fn randomkey_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn randomkey_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &server.db[client.db_idx];
     if db.dict.len() == 0 {
         client.add_reply(shared_object!(NULL_BULK));
@@ -1110,16 +927,10 @@ pub fn randomkey_command(
     }
 }
 
-pub fn select_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn select_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let idx = client.argv[1].borrow().object_to_long();
     match idx {
-        Err(_) => {
-            client.add_str_reply("-ERR invalid DB index\r\n")
-        }
+        Err(_) => client.add_str_reply("-ERR invalid DB index\r\n"),
         Ok(idx) => {
             if idx < 0 || idx >= server.db.len() as i64 {
                 client.add_str_reply("-ERR invalid DB index\r\n");
@@ -1131,11 +942,7 @@ pub fn select_command(
     }
 }
 
-pub fn move_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn move_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let r = client.argv[2].borrow().object_to_long();
     let dst = match r {
         Ok(i) => i,
@@ -1178,27 +985,15 @@ pub fn move_command(
     }
 }
 
-pub fn rename_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn rename_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     rename_general_command(client, server, false);
 }
 
-pub fn renamenx_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn renamenx_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     rename_general_command(client, server, true);
 }
 
-pub fn rename_general_command(
-    client: &mut Client,
-    server: &mut Server,
-    nx: bool,
-) {
+pub fn rename_general_command(client: &mut Client, server: &mut Server, nx: bool) {
     let db = &mut server.db[client.db_idx];
 
     let value = match db.look_up_key_read(&client.argv[1]) {
@@ -1218,10 +1013,7 @@ pub fn rename_general_command(
         return;
     }
 
-    if let Err(_) = db.dict.add(
-        Rc::clone(&client.argv[2]),
-        Rc::clone(&value),
-    ) {
+    if let Err(_) = db.dict.add(Rc::clone(&client.argv[2]), Rc::clone(&value)) {
         if nx {
             client.add_reply(shared_object!(CZERO));
             return;
@@ -1238,11 +1030,7 @@ pub fn rename_general_command(
     server.dirty += 1;
 }
 
-pub fn expire_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn expire_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let r = {
         let obj_ref = client.argv[2].borrow();
         bytes_to_usize(obj_ref.string())
@@ -1262,8 +1050,7 @@ pub fn expire_command(
             return;
         }
         Some(_) => {
-            let when: SystemTime =
-                SystemTime::now() + Duration::from_secs(seconds as u64);
+            let when: SystemTime = SystemTime::now() + Duration::from_secs(seconds as u64);
             match db.set_expire(Rc::clone(&client.argv[1]), when) {
                 Ok(_) => {
                     client.add_reply(shared_object!(CONE));
@@ -1275,11 +1062,7 @@ pub fn expire_command(
     }
 }
 
-pub fn keys_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn keys_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
     let pat_obj = Rc::clone(&client.argv[1]);
     let pat_ref = pat_obj.borrow();
@@ -1289,10 +1072,12 @@ pub fn keys_command(
     let mut n: usize = 0;
     client.add_reply(Rc::clone(&num));
 
-    for key in db.dict.iter()
+    for key in db
+        .dict
+        .iter()
         .map(|x| x.0)
-        .filter(|x|
-            glob_match(pat, x.borrow().string(), false)) {
+        .filter(|x| glob_match(pat, x.borrow().string(), false))
+    {
         add_single_reply(client, Rc::clone(&key));
         n += 1;
     }
@@ -1300,22 +1085,15 @@ pub fn keys_command(
     num.borrow_mut().change_to_str(&format!("*{}\r\n", n));
 }
 
-pub fn dbsize_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn dbsize_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &server.db[client.db_idx];
     client.add_reply(gen_usize_reply(db.dict.len()));
 }
 
-pub fn auth_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
-    if server.require_pass.is_none() ||
-        client.argv[1].borrow().string() == server.require_pass.as_ref().unwrap().as_bytes() {
+pub fn auth_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
+    if server.require_pass.is_none()
+        || client.argv[1].borrow().string() == server.require_pass.as_ref().unwrap().as_bytes()
+    {
         client.authenticate = true;
         client.add_reply(shared_object!(OK));
     } else {
@@ -1324,11 +1102,7 @@ pub fn auth_command(
     }
 }
 
-pub fn save_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn save_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     if server.bg_save_in_progress {
         client.add_str_reply("-ERR background save in progress\r\n")
     }
@@ -1339,11 +1113,7 @@ pub fn save_command(
     }
 }
 
-pub fn bgsave_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn bgsave_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     if server.bg_save_in_progress {
         client.add_str_reply("-ERR background save already in progress\r\n");
         return;
@@ -1355,11 +1125,7 @@ pub fn bgsave_command(
     }
 }
 
-pub fn shutdown_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn shutdown_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     warn!("User requested shutdown, saving DB...");
 
     if server.bg_save_in_progress {
@@ -1383,23 +1149,16 @@ pub fn shutdown_command(
     }
 }
 
-pub fn lastsave_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
-    let timestamp = server.last_save
+pub fn lastsave_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
+    let timestamp = server
+        .last_save
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_secs();
     client.add_reply(gen_usize_reply(timestamp as usize));
 }
 
-pub fn type_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn type_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
 
     match db.look_up_key_read(&client.argv[1]) {
@@ -1418,11 +1177,7 @@ pub fn type_command(
     }
 }
 
-pub fn sync_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn sync_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     if client.flags & CLIENT_SLAVE != 0 {
         return;
     }
@@ -1435,10 +1190,10 @@ pub fn sync_command(
     info!("Slave ask for synchronization");
 
     if server.bg_save_in_progress {
-        let ln = server.slaves
+        let ln = server
+            .slaves
             .iter()
-            .filter(|c|
-                c.borrow().reply_state == ReplyState::WaitBgSaveEnd)
+            .filter(|c| c.borrow().reply_state == ReplyState::WaitBgSaveEnd)
             .next();
         if let Some(_) = ln {
             // Perfect, the server is already registering differences for
@@ -1466,29 +1221,17 @@ pub fn sync_command(
     server.transfer_client_to_slaves(client, false);
 }
 
-pub fn flushdb_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn flushdb_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     server.flush_db(client.db_idx);
     client.add_reply(shared_object!(OK));
 }
 
-pub fn flushall_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn flushall_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     server.flush_all();
     client.add_reply(shared_object!(OK));
 }
 
-pub fn sort_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn sort_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
 
     let target = match db.look_up_key_read(&client.argv[1]) {
@@ -1526,16 +1269,14 @@ pub fn sort_command(
     let get = sort_info.get.take();
     let limit = sort_info.limit.take();
 
-    let mut v: Vec<(RobjPtr, RobjPtr)> =
-        Vec::with_capacity(target_ref.linear_len());
+    let mut v: Vec<(RobjPtr, RobjPtr)> = Vec::with_capacity(target_ref.linear_len());
     for o in target_ref.linear_iter() {
         if let Some(pat) = by.as_ref() {
             let key = generate_key_from_pattern(pat, o.borrow().string());
-            let sort_key =
-                match db.look_up_key_read(&Robj::from_bytes(key)) {
-                    Some(k) => k,
-                    None => Robj::create_int_object(0),
-                };
+            let sort_key = match db.look_up_key_read(&Robj::from_bytes(key)) {
+                Some(k) => k,
+                None => Robj::create_int_object(0),
+            };
             v.push((sort_key, o));
         } else {
             let sort_key = Rc::clone(&o);
@@ -1556,10 +1297,11 @@ pub fn sort_command(
         }
     };
 
-
     if let Err(_) = sort_info.options.sort(&mut v) {
-        client.add_str_reply("-ERR One or more scores \
-                can't be converted into double\r\n");
+        client.add_str_reply(
+            "-ERR One or more scores \
+                can't be converted into double\r\n",
+        );
         return;
     }
 
@@ -1574,15 +1316,12 @@ pub fn sort_command(
         }
         Some(get) => {
             client.add_reply_from_string(format!("*{}\r\n", out.len() * get.len()));
-            for (j, key) in out.iter()
-                .map(|p| &p.1)
-                .enumerate() {
+            for (j, key) in out.iter().map(|p| &p.1).enumerate() {
                 for pat in get.iter() {
                     if pat.len() == 1 && pat[0] == b'#' {
                         add_single_reply(client, Robj::create_int_object(j as i64));
                     } else {
-                        let key =
-                            generate_key_from_pattern(&pat[..], key.borrow().string());
+                        let key = generate_key_from_pattern(&pat[..], key.borrow().string());
                         match db.look_up_key_read(&Robj::from_bytes(key)) {
                             Some(o) => add_single_reply(client, o),
                             None => client.add_reply(shared_object!(NULL_BULK)),
@@ -1594,20 +1333,12 @@ pub fn sort_command(
     }
 }
 
-pub fn info_command(
-    client: &mut Client,
-    _server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
-// TODO
+pub fn info_command(client: &mut Client, _server: &mut Server, _el: &mut AeEventLoop) {
+    // TODO
     client.add_str_reply("-ERR not yet implemented\r\n");
 }
 
-pub fn monitor_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn monitor_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     if client.flags & CLIENT_SLAVE != 0 {
         return;
     }
@@ -1617,13 +1348,10 @@ pub fn monitor_command(
     client.add_reply(shared_object!(OK));
 }
 
-pub fn slaveof_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
-    if case_eq(client.argv[1].borrow().string(), b"no") &&
-        case_eq(client.argv[2].borrow().string(), b"one") {
+pub fn slaveof_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
+    if case_eq(client.argv[1].borrow().string(), b"no")
+        && case_eq(client.argv[2].borrow().string(), b"one")
+    {
         if server.master_host.is_some() {
             server.master_host = None;
             server.master = None;
@@ -1631,14 +1359,9 @@ pub fn slaveof_command(
             info!("MASTER MODE enabled (user request");
         }
     } else {
-        let host =
-            String::from_utf8(
-                client.argv[1].borrow().string().to_vec()
-            ).unwrap_or("illegal".to_string());
-        let port =
-            parse_port_from_bytes(
-                client.argv[2].borrow().string()
-            ).unwrap_or(0);
+        let host = String::from_utf8(client.argv[1].borrow().string().to_vec())
+            .unwrap_or("illegal".to_string());
+        let port = parse_port_from_bytes(client.argv[2].borrow().string()).unwrap_or(0);
         info!("SLAVE OF {}:{} enabled (user request)", host, port);
         server.master_host = Some(host);
         server.master_port = port;
@@ -1647,11 +1370,7 @@ pub fn slaveof_command(
     client.add_reply(shared_object!(OK));
 }
 
-pub fn eval_command(
-    client: &mut Client,
-    server: &mut Server,
-    el: &mut AeEventLoop,
-) {
+pub fn eval_command(client: &mut Client, server: &mut Server, el: &mut AeEventLoop) {
     let keys_len_obj = Rc::clone(&client.argv[1]);
     let keys_len = match keys_len_obj.borrow().object_to_long() {
         Ok(i) => {
@@ -1673,18 +1392,20 @@ pub fn eval_command(
     }
 
     let real_script = client.argv[1].borrow().string().to_vec();
-    let lua_keys: Vec<LuaRobj> = client.argv[2..(2 + keys_len)].iter().map(|x| {
-        to_lua(Rc::clone(x))
-    }).collect();
-    let lua_args: Vec<LuaRobj> = client.argv[(2 + keys_len)..].iter().map(|x| {
-        to_lua(Rc::clone(x))
-    }).collect();
-    let lua_client =
-        Client::with_fd(Rc::new(RefCell::new(Fdp::Nil)));
+    let lua_keys: Vec<LuaRobj> = client.argv[2..(2 + keys_len)]
+        .iter()
+        .map(|x| to_lua(Rc::clone(x)))
+        .collect();
+    let lua_args: Vec<LuaRobj> = client.argv[(2 + keys_len)..]
+        .iter()
+        .map(|x| to_lua(Rc::clone(x)))
+        .collect();
+    let lua_client = Client::with_fd(Rc::new(RefCell::new(Fdp::Nil)));
     let lua_state = Rc::clone(&server.lua);
 
-    let r = lua_state.borrow_mut().context(
-        move |ctx| -> Result<(), rlua::Error> {
+    let r = lua_state
+        .borrow_mut()
+        .context(move |ctx| -> Result<(), rlua::Error> {
             let globals = ctx.globals();
             globals.set("KEYS", lua_keys)?;
             globals.set("ARGS", lua_args)?;
@@ -1699,7 +1420,10 @@ pub fn eval_command(
                                 RobjFromLua::Nil => continue,
                                 RobjFromLua::Robj(obj) => {
                                     lua_client.borrow_mut().argv.push(obj.clone());
-                                    debug!("{}", std::str::from_utf8(obj.borrow().string()).unwrap());
+                                    debug!(
+                                        "{}",
+                                        std::str::from_utf8(obj.borrow().string()).unwrap()
+                                    );
                                 }
                                 _ => {}
                             }
@@ -1709,7 +1433,8 @@ pub fn eval_command(
                         let globals = ctx.globals();
                         globals.set("RETURN_FROM_RUST", back_to_lua)?;
                         Ok(vec![])
-                    })?;
+                    },
+                )?;
                 let globals = ctx.globals();
                 globals.set("redis_call_internal", func)?;
                 ctx.load(&real_script).exec()?;
@@ -1718,8 +1443,7 @@ pub fn eval_command(
                 Ok(())
             })?;
             Ok(())
-        }
-    );
+        });
 
     if let Err(_) = r {
         client.add_str_reply("-ERR Lua error");
@@ -1727,35 +1451,19 @@ pub fn eval_command(
     }
 }
 
-pub fn ping_command(
-    client: &mut Client,
-    _server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn ping_command(client: &mut Client, _server: &mut Server, _el: &mut AeEventLoop) {
     client.add_reply(shared_object!(PONG));
 }
 
-pub fn echo_command(
-    client: &mut Client,
-    _server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn echo_command(client: &mut Client, _server: &mut Server, _el: &mut AeEventLoop) {
     add_single_reply(client, Rc::clone(&client.argv[1]));
 }
 
-pub fn command_command(
-    client: &mut Client,
-    _server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn command_command(client: &mut Client, _server: &mut Server, _el: &mut AeEventLoop) {
     client.add_reply(shared_object!(OK));
 }
 
-pub fn ttl_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn ttl_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let db = &mut server.db[client.db_idx];
 
     match db.get_expire(&client.argv[1]) {
@@ -1769,20 +1477,14 @@ pub fn ttl_command(
                 client.add_reply_from_string(format!(":{}\r\n", second));
             };
         }
-        None => {
-            match db.look_up_key_read(&client.argv[1]) {
-                None => client.add_reply_from_string(format!(":{}\r\n", -2)),
-                Some(_) => client.add_reply_from_string(format!(":{}\r\n", -1)),
-            }
-        }
+        None => match db.look_up_key_read(&client.argv[1]) {
+            None => client.add_reply_from_string(format!(":{}\r\n", -2)),
+            Some(_) => client.add_reply_from_string(format!(":{}\r\n", -1)),
+        },
     }
 }
 
-pub fn object_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn object_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     let sub = client.argv[1].borrow().string().to_ascii_lowercase();
     match &sub[..] {
         b"encoding" => object_encoding_command(client, server, _el),
@@ -1792,11 +1494,7 @@ pub fn object_command(
     }
 }
 
-pub fn object_encoding_command(
-    client: &mut Client,
-    server: &mut Server,
-    _el: &mut AeEventLoop,
-) {
+pub fn object_encoding_command(client: &mut Client, server: &mut Server, _el: &mut AeEventLoop) {
     if client.argc() != 3 {
         client.add_str_reply("-Error wrong number of arguments\r\n");
         return;
@@ -1853,70 +1551,374 @@ fn real_list_index(idx: i64, len: usize) -> i64 {
 }
 
 const CMD_TABLE: &[Command] = &[
-    Command { name: "get", proc: get_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "set", proc: set_command, arity: 3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
-    Command { name: "setnx", proc: setnx_command, arity: 3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
-    Command { name: "del", proc: del_command, arity: -2, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "exists", proc: exists_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "incr", proc: incr_command, arity: 2, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
-    Command { name: "decr", proc: decr_command, arity: 2, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
-    Command { name: "mget", proc: mget_command, arity: -2, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "rpush", proc: rpush_command, arity: -3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
-    Command { name: "lpush", proc: lpush_command, arity: -3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
-    Command { name: "lpop", proc: lpop_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "rpop", proc: rpop_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "llen", proc: llen_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "lindex", proc: lindex_command, arity: 3, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "lset", proc: lset_command, arity: 4, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
-    Command { name: "lrange", proc: lrange_command, arity: 4, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "ltrim", proc: ltrim_command, arity: 4, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "lrem", proc: lrem_command, arity: 4, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "sadd", proc: sadd_command, arity: -3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
-    Command { name: "srem", proc: srem_command, arity: -3, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "smove", proc: smove_command, arity: 4, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "sismember", proc: sismember_command, arity: 3, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "scard", proc: scard_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "spop", proc: spop_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "sinter", proc: sinter_command, arity: -2, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
-    Command { name: "sinterstore", proc: sinterstore_command, arity: -3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
-    Command { name: "sunion", proc: sunion_command, arity: -2, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
-    Command { name: "sunionstore", proc: sunionstore_command, arity: -3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
-    Command { name: "sdiff", proc: sdiff_command, arity: -2, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
-    Command { name: "sdiffstore", proc: sdiffstore_command, arity: -3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
-    Command { name: "smembers", proc: smembers_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "incrby", proc: incr_by_command, arity: 3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
-    Command { name: "decrby", proc: decr_by_command, arity: 3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
-    Command { name: "getset", proc: get_set_command, arity: 3, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
-    Command { name: "randomkey", proc: randomkey_command, arity: 1, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "select", proc: select_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "move", proc: move_command, arity: 3, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "rename", proc: rename_command, arity: 3, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "renamenx", proc: renamenx_command, arity: 3, flags: CMD_INLINE },
-    Command { name: "expire", proc: expire_command, arity: 3, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "keys", proc: keys_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "dbsize", proc: dbsize_command, arity: 1, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "auth", proc: auth_command, arity: 2, flags: CMD_INLINE },
-    Command { name: "ping", proc: ping_command, arity: 1, flags: CMD_INLINE },
-    Command { name: "echo", proc: echo_command, arity: 2, flags: CMD_INLINE },
-    Command { name: "save", proc: save_command, arity: 1, flags: CMD_INLINE },
-    Command { name: "bgsave", proc: bgsave_command, arity: 1, flags: CMD_INLINE },
-    Command { name: "shutdown", proc: shutdown_command, arity: 1, flags: CMD_INLINE },
-    Command { name: "lastsave", proc: lastsave_command, arity: 1, flags: CMD_INLINE },
-    Command { name: "type", proc: type_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "sync", proc: sync_command, arity: 1, flags: CMD_INLINE },
-    Command { name: "flushdb", proc: flushdb_command, arity: 1, flags: CMD_INLINE },
-    Command { name: "flushall", proc: flushall_command, arity: 1, flags: CMD_INLINE },
-    Command { name: "sort", proc: sort_command, arity: -2, flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA },
-    Command { name: "info", proc: info_command, arity: 1, flags: CMD_INLINE },
-    Command { name: "monitor", proc: monitor_command, arity: 1, flags: CMD_INLINE },
-    Command { name: "ttl", proc: ttl_command, arity: 2, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "slaveof", proc: slaveof_command, arity: 3, flags: CMD_INLINE },
-    Command { name: "eval", proc: eval_command, arity: -2, flags: CMD_INLINE | CMD_DENY_OOM },
-    Command { name: "object", proc: object_command, arity: -2, flags: CMD_INLINE | CMD_LUA },
-    Command { name: "command", proc: command_command, arity: 1, flags: CMD_INLINE },
+    Command {
+        name: "get",
+        proc: get_command,
+        arity: 2,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "set",
+        proc: set_command,
+        arity: 3,
+        flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA,
+    },
+    Command {
+        name: "setnx",
+        proc: setnx_command,
+        arity: 3,
+        flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA,
+    },
+    Command {
+        name: "del",
+        proc: del_command,
+        arity: -2,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "exists",
+        proc: exists_command,
+        arity: 2,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "incr",
+        proc: incr_command,
+        arity: 2,
+        flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA,
+    },
+    Command {
+        name: "decr",
+        proc: decr_command,
+        arity: 2,
+        flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA,
+    },
+    Command {
+        name: "mget",
+        proc: mget_command,
+        arity: -2,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "rpush",
+        proc: rpush_command,
+        arity: -3,
+        flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA,
+    },
+    Command {
+        name: "lpush",
+        proc: lpush_command,
+        arity: -3,
+        flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA,
+    },
+    Command {
+        name: "lpop",
+        proc: lpop_command,
+        arity: 2,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "rpop",
+        proc: rpop_command,
+        arity: 2,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "llen",
+        proc: llen_command,
+        arity: 2,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "lindex",
+        proc: lindex_command,
+        arity: 3,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "lset",
+        proc: lset_command,
+        arity: 4,
+        flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA,
+    },
+    Command {
+        name: "lrange",
+        proc: lrange_command,
+        arity: 4,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "ltrim",
+        proc: ltrim_command,
+        arity: 4,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "lrem",
+        proc: lrem_command,
+        arity: 4,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "sadd",
+        proc: sadd_command,
+        arity: -3,
+        flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA,
+    },
+    Command {
+        name: "srem",
+        proc: srem_command,
+        arity: -3,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "smove",
+        proc: smove_command,
+        arity: 4,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "sismember",
+        proc: sismember_command,
+        arity: 3,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "scard",
+        proc: scard_command,
+        arity: 2,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "spop",
+        proc: spop_command,
+        arity: 2,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "sinter",
+        proc: sinter_command,
+        arity: -2,
+        flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA,
+    },
+    Command {
+        name: "sinterstore",
+        proc: sinterstore_command,
+        arity: -3,
+        flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA,
+    },
+    Command {
+        name: "sunion",
+        proc: sunion_command,
+        arity: -2,
+        flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA,
+    },
+    Command {
+        name: "sunionstore",
+        proc: sunionstore_command,
+        arity: -3,
+        flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA,
+    },
+    Command {
+        name: "sdiff",
+        proc: sdiff_command,
+        arity: -2,
+        flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA,
+    },
+    Command {
+        name: "sdiffstore",
+        proc: sdiffstore_command,
+        arity: -3,
+        flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA,
+    },
+    Command {
+        name: "smembers",
+        proc: smembers_command,
+        arity: 2,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "incrby",
+        proc: incr_by_command,
+        arity: 3,
+        flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA,
+    },
+    Command {
+        name: "decrby",
+        proc: decr_by_command,
+        arity: 3,
+        flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA,
+    },
+    Command {
+        name: "getset",
+        proc: get_set_command,
+        arity: 3,
+        flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA,
+    },
+    Command {
+        name: "randomkey",
+        proc: randomkey_command,
+        arity: 1,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "select",
+        proc: select_command,
+        arity: 2,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "move",
+        proc: move_command,
+        arity: 3,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "rename",
+        proc: rename_command,
+        arity: 3,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "renamenx",
+        proc: renamenx_command,
+        arity: 3,
+        flags: CMD_INLINE,
+    },
+    Command {
+        name: "expire",
+        proc: expire_command,
+        arity: 3,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "keys",
+        proc: keys_command,
+        arity: 2,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "dbsize",
+        proc: dbsize_command,
+        arity: 1,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "auth",
+        proc: auth_command,
+        arity: 2,
+        flags: CMD_INLINE,
+    },
+    Command {
+        name: "ping",
+        proc: ping_command,
+        arity: 1,
+        flags: CMD_INLINE,
+    },
+    Command {
+        name: "echo",
+        proc: echo_command,
+        arity: 2,
+        flags: CMD_INLINE,
+    },
+    Command {
+        name: "save",
+        proc: save_command,
+        arity: 1,
+        flags: CMD_INLINE,
+    },
+    Command {
+        name: "bgsave",
+        proc: bgsave_command,
+        arity: 1,
+        flags: CMD_INLINE,
+    },
+    Command {
+        name: "shutdown",
+        proc: shutdown_command,
+        arity: 1,
+        flags: CMD_INLINE,
+    },
+    Command {
+        name: "lastsave",
+        proc: lastsave_command,
+        arity: 1,
+        flags: CMD_INLINE,
+    },
+    Command {
+        name: "type",
+        proc: type_command,
+        arity: 2,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "sync",
+        proc: sync_command,
+        arity: 1,
+        flags: CMD_INLINE,
+    },
+    Command {
+        name: "flushdb",
+        proc: flushdb_command,
+        arity: 1,
+        flags: CMD_INLINE,
+    },
+    Command {
+        name: "flushall",
+        proc: flushall_command,
+        arity: 1,
+        flags: CMD_INLINE,
+    },
+    Command {
+        name: "sort",
+        proc: sort_command,
+        arity: -2,
+        flags: CMD_INLINE | CMD_DENY_OOM | CMD_LUA,
+    },
+    Command {
+        name: "info",
+        proc: info_command,
+        arity: 1,
+        flags: CMD_INLINE,
+    },
+    Command {
+        name: "monitor",
+        proc: monitor_command,
+        arity: 1,
+        flags: CMD_INLINE,
+    },
+    Command {
+        name: "ttl",
+        proc: ttl_command,
+        arity: 2,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "slaveof",
+        proc: slaveof_command,
+        arity: 3,
+        flags: CMD_INLINE,
+    },
+    Command {
+        name: "eval",
+        proc: eval_command,
+        arity: -2,
+        flags: CMD_INLINE | CMD_DENY_OOM,
+    },
+    Command {
+        name: "object",
+        proc: object_command,
+        arity: -2,
+        flags: CMD_INLINE | CMD_LUA,
+    },
+    Command {
+        name: "command",
+        proc: command_command,
+        arity: 1,
+        flags: CMD_INLINE,
+    },
 ];
 
 pub fn lookup_command(name: &[u8]) -> Option<&'static Command> {
-    CMD_TABLE.iter()
-        .find(|x| case_eq(x.name.as_bytes(), name))
+    CMD_TABLE.iter().find(|x| case_eq(x.name.as_bytes(), name))
 }

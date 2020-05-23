@@ -1,17 +1,18 @@
-use mio::*;
-use std::time::{SystemTime, Duration};
-use std::ops::Add;
-use std::error::Error;
-use std::rc::Rc;
-use mio::net::{TcpListener, TcpStream};
-use crate::server::Server;
-use std::cell::RefCell;
 use crate::client::*;
-use std::collections::{VecDeque, HashMap};
+use crate::server::Server;
+use mio::net::{TcpListener, TcpStream};
+use mio::*;
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
+use std::error::Error;
+use std::ops::Add;
+use std::rc::Rc;
 use std::sync::atomic::Ordering;
+use std::time::{Duration, SystemTime};
 
 type AeTimeProc = fn(server: &mut Server, el: &mut AeEventLoop, id: i64, data: &ClientData) -> i32;
-type AeFileProc = fn(server: &mut Server, el: &mut AeEventLoop, fd: &Fd, data: &ClientData, mask: i32);
+type AeFileProc =
+    fn(server: &mut Server, el: &mut AeEventLoop, fd: &Fd, data: &ClientData, mask: i32);
 type AeEventFinalizerProc = fn(el: &mut AeEventLoop, data: &ClientData);
 pub type Fd = Rc<RefCell<Fdp>>;
 
@@ -66,11 +67,22 @@ impl Fdp {
     }
 }
 
-fn _default_ae_time_proc(_server: &mut Server, _el: &mut AeEventLoop, _id: i64,
-                         _data: &ClientData) -> i32 { 1 }
+fn _default_ae_time_proc(
+    _server: &mut Server,
+    _el: &mut AeEventLoop,
+    _id: i64,
+    _data: &ClientData,
+) -> i32 {
+    1
+}
 
-pub fn default_ae_file_proc(_server: &mut Server, _el: &mut AeEventLoop,
-                            _fd: &Fd, _data: &ClientData, _mask: i32) {
+pub fn default_ae_file_proc(
+    _server: &mut Server,
+    _el: &mut AeEventLoop,
+    _fd: &Fd,
+    _data: &ClientData,
+    _mask: i32,
+) {
     panic!("Default file proc should never be called");
 }
 
@@ -126,18 +138,11 @@ impl AeEventLoop {
         ready
     }
 
-    pub fn async_modify_active_file_event(
-        &mut self,
-        mask: i32,
-        file_proc: AeFileProc,
-    ) {
+    pub fn async_modify_active_file_event(&mut self, mask: i32, file_proc: AeFileProc) {
         self.active_return_action = ActiveReturnAction::Merge(mask, file_proc);
     }
 
-    pub fn async_reduce_active_file_event(
-        &mut self,
-        mask: i32,
-    ) {
+    pub fn async_reduce_active_file_event(&mut self, mask: i32) {
         self.active_return_action = ActiveReturnAction::Reduce(mask);
     }
 
@@ -150,21 +155,26 @@ impl AeEventLoop {
     ) -> Result<(), ()> {
         let fe = self.file_events_hash.get_mut(&token).unwrap();
 
-        self.poll.reregister(
-            socket,
-            token,
-            Self::readiness(fe.mask | mask),
-            PollOpt::level(),
-        ).unwrap();
+        self.poll
+            .reregister(
+                socket,
+                token,
+                Self::readiness(fe.mask | mask),
+                PollOpt::level(),
+            )
+            .unwrap();
 
         fe.mask |= mask;
 
-        if mask & AE_READABLE != 0 { fe.r_file_proc = file_proc; }
-        if mask & AE_WRITABLE != 0 { fe.w_file_proc = file_proc; }
+        if mask & AE_READABLE != 0 {
+            fe.r_file_proc = file_proc;
+        }
+        if mask & AE_WRITABLE != 0 {
+            fe.w_file_proc = file_proc;
+        }
 
         Ok(())
     }
-
 
     pub fn async_delete_active_file_event(&mut self) {
         self.active_return_action = ActiveReturnAction::Delete;
@@ -178,31 +188,40 @@ impl AeEventLoop {
         client_data: ClientData,
     ) -> Result<(), ()> {
         let token = Token(fd.as_ptr() as usize);
-        let mut fe = self.file_events_hash.remove(&token).unwrap_or(
-            AeFileEvent::new(fd)
-        );
+        let mut fe = self
+            .file_events_hash
+            .remove(&token)
+            .unwrap_or(AeFileEvent::new(fd));
 
         if fe.mask == 0 {
             assert_ne!(mask, 0);
-            self.poll.register(
-                fe.fd.borrow().to_evented(),
-                token,
-                Self::readiness(mask),
-                PollOpt::level(),
-            ).unwrap();
+            self.poll
+                .register(
+                    fe.fd.borrow().to_evented(),
+                    token,
+                    Self::readiness(mask),
+                    PollOpt::level(),
+                )
+                .unwrap();
         } else {
-            self.poll.reregister(
-                fe.fd.borrow().to_evented(),
-                token,
-                Self::readiness(fe.mask | mask),
-                PollOpt::level(),
-            ).unwrap();
+            self.poll
+                .reregister(
+                    fe.fd.borrow().to_evented(),
+                    token,
+                    Self::readiness(fe.mask | mask),
+                    PollOpt::level(),
+                )
+                .unwrap();
         }
 
         fe.mask |= mask;
 
-        if mask & AE_READABLE != 0 { fe.r_file_proc = file_proc; }
-        if mask & AE_WRITABLE != 0 { fe.w_file_proc = file_proc; }
+        if mask & AE_READABLE != 0 {
+            fe.r_file_proc = file_proc;
+        }
+        if mask & AE_WRITABLE != 0 {
+            fe.w_file_proc = file_proc;
+        }
 
         fe.client_data = client_data;
 
@@ -217,15 +236,21 @@ impl AeEventLoop {
             }
             ActiveReturnAction::Delete => {}
             ActiveReturnAction::Merge(mask, file_proc) => {
-                self.poll.reregister(
-                    fe.fd.borrow().to_evented(),
-                    token,
-                    Self::readiness(mask | fe.mask),
-                    PollOpt::level(),
-                ).unwrap();
+                self.poll
+                    .reregister(
+                        fe.fd.borrow().to_evented(),
+                        token,
+                        Self::readiness(mask | fe.mask),
+                        PollOpt::level(),
+                    )
+                    .unwrap();
 
-                if mask & AE_WRITABLE != 0 { fe.w_file_proc = file_proc; }
-                if mask & AE_READABLE != 0 { fe.r_file_proc = file_proc; }
+                if mask & AE_WRITABLE != 0 {
+                    fe.w_file_proc = file_proc;
+                }
+                if mask & AE_READABLE != 0 {
+                    fe.r_file_proc = file_proc;
+                }
 
                 fe.mask |= mask;
 
@@ -239,12 +264,14 @@ impl AeEventLoop {
 
                 fe.mask &= !mask;
 
-                self.poll.reregister(
-                    fe.fd.borrow().to_evented(),
-                    token,
-                    Self::readiness(fe.mask),
-                    PollOpt::level(),
-                ).unwrap();
+                self.poll
+                    .reregister(
+                        fe.fd.borrow().to_evented(),
+                        token,
+                        Self::readiness(fe.mask),
+                        PollOpt::level(),
+                    )
+                    .unwrap();
 
                 if mask & AE_WRITABLE != 0 {
                     fe.w_file_proc = default_ae_file_proc;
@@ -273,12 +300,9 @@ impl AeEventLoop {
                 Ready::writable()
             };
 
-            self.poll.reregister(
-                fe.fd.borrow().to_evented(),
-                token,
-                ready,
-                PollOpt::level(),
-            ).unwrap();
+            self.poll
+                .reregister(fe.fd.borrow().to_evented(), token, ready, PollOpt::level())
+                .unwrap();
             return;
         }
 
@@ -347,8 +371,9 @@ impl AeEventLoop {
 
         let poll = &self.poll;
 
-        if self.file_events_hash.len() > 0 ||
-            ((flags & AE_TIME_EVENTS != 0) && (flags & AE_DONT_WAIT == 0)) {
+        if self.file_events_hash.len() > 0
+            || ((flags & AE_TIME_EVENTS != 0) && (flags & AE_DONT_WAIT == 0))
+        {
             let mut wait: Option<Duration> = None;
             let mut shortest: Option<SystemTime> = None;
             if (flags & AE_TIME_EVENTS != 0) && (flags & AE_DONT_WAIT == 0) {
@@ -406,8 +431,7 @@ impl AeEventLoop {
             let mut te = self.time_events.pop_front().unwrap();
             if curr > te.when {
                 let id = te.id;
-                let retval
-                    = (&te.time_proc)(server, self, id, &te.client_data);
+                let retval = (&te.time_proc)(server, self, id, &te.client_data);
                 if retval != -1 {
                     te.when = te.when.add(Duration::from_millis(retval as u64));
                 }
@@ -463,7 +487,6 @@ struct AeTimeEvent {
     client_data: ClientData,
 }
 
-
 fn _ae_wait(fd: &Fd, mask: i32, duration: Duration) -> Result<i32, Box<dyn Error>> {
     let poll = Poll::new()?;
     let mut ready: Ready = Ready::empty();
@@ -490,7 +513,6 @@ fn _ae_wait(fd: &Fd, mask: i32, duration: Duration) -> Result<i32, Box<dyn Error
     unreachable!()
 }
 
-
 pub const AE_READABLE: i32 = 0b0001;
 pub const AE_WRITABLE: i32 = 0b0010;
 pub const AE_EXCEPTION: i32 = 0b0100;
@@ -500,7 +522,6 @@ pub const AE_FILE_EVENTS: i32 = 0b0001;
 pub const AE_TIME_EVENTS: i32 = 0b0010;
 pub const AE_ALL_EVENTS: i32 = AE_FILE_EVENTS | AE_TIME_EVENTS;
 pub const AE_DONT_WAIT: i32 = 0b0100;
-
 
 #[cfg(test)]
 mod test {

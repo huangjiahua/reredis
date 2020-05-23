@@ -1,8 +1,8 @@
-use crate::object::{RobjPtr, Robj};
-use rlua::{ToLua, Context, Value, Error, FromLua};
-use std::ffi::CString;
+use crate::object::{Robj, RobjPtr};
+use crate::util::{bulk_reply_to_int, int_reply_to_int, multi_bulk_reply_to_int};
+use rlua::{Context, Error, FromLua, ToLua, Value};
 use std::collections::HashMap;
-use crate::util::{int_reply_to_int, bulk_reply_to_int, multi_bulk_reply_to_int};
+use std::ffi::CString;
 
 #[derive(Clone)]
 pub struct LuaRobj(RobjPtr);
@@ -39,7 +39,11 @@ impl<'lua> ToLua<'lua> for LuaRobj {
         if let Ok(s) = CString::new(self.0.borrow().string().to_vec()) {
             return s.to_lua(lua);
         }
-        Err(rlua::Error::ToLuaConversionError { from: "", to: "", message: None })
+        Err(rlua::Error::ToLuaConversionError {
+            from: "",
+            to: "",
+            message: None,
+        })
     }
 }
 
@@ -48,10 +52,8 @@ impl<'lua> FromLua<'lua> for RobjFromLua {
         match lua_value {
             Value::Nil => Ok(Self::Nil),
             Value::Integer(n) => Ok(Self::Robj(Robj::create_string_object_from_long(n))),
-            Value::Number(n) =>
-                Ok(Self::Robj(Robj::create_string_object_from_double(n))),
-            Value::String(s) =>
-                Ok(Self::Robj(Robj::from_bytes(s.as_bytes().to_vec()))),
+            Value::Number(n) => Ok(Self::Robj(Robj::create_string_object_from_double(n))),
+            Value::String(s) => Ok(Self::Robj(Robj::from_bytes(s.as_bytes().to_vec()))),
             Value::Table(t) => {
                 let len = t.len()? as usize;
                 let mut vec: Vec<RobjFromLua> = Vec::with_capacity(len);
@@ -61,7 +63,7 @@ impl<'lua> FromLua<'lua> for RobjFromLua {
                 }
                 Ok(Self::Table(vec))
             }
-            _ => panic!("Unknown lua type")
+            _ => panic!("Unknown lua type"),
         }
     }
 }
@@ -130,9 +132,7 @@ impl<'lua> ToLua<'lua> for LuaRedis {
                 map.insert("ok".to_string(), s).unwrap();
                 map.to_lua(lua)
             }
-            Self::Nil => {
-                false.to_lua(lua)
-            }
+            Self::Nil => false.to_lua(lua),
         }
     }
 }
@@ -203,4 +203,3 @@ if BACK_TO_RUST ~= nil then
 end
 -- running code en
 "#;
-
