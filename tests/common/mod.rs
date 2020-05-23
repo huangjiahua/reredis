@@ -10,14 +10,13 @@ pub fn level_to_character(level: log::Level) -> &'static str {
 pub fn test_init_logger() {
     let mut builder = env_logger::Builder::new();
     builder.filter_level(log::LevelFilter::Debug);
-    builder.format(
-        |buf, record|
-            writeln!(
-                buf,
-                "{}: {}",
-                level_to_character(record.level()),
-                record.args(),
-            )
-    );
+    builder.format(|buf, record| {
+        writeln!(
+            buf,
+            "{}: {}",
+            level_to_character(record.level()),
+            record.args(),
+        )
+    });
     builder.init();
 }

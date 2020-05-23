@@ -10,20 +10,20 @@ static A: Zalloc = Zalloc;
 
 mod common;
 
+use common::*;
+use rand::Rng;
+use redis::Commands;
 use reredis::env::*;
 use reredis::oom::oom;
 use reredis::zalloc::Zalloc;
-use threadpool::ThreadPool;
-use std::thread::sleep;
-use std::time::Duration;
-use std::sync::mpsc;
-use std::thread;
+use std::error::Error;
 use std::fmt;
 use std::io::Write;
-use common::*;
-use std::error::Error;
-use redis::Commands;
-use rand::Rng;
+use std::sync::mpsc;
+use std::thread;
+use std::thread::sleep;
+use std::time::Duration;
+use threadpool::ThreadPool;
 
 const ADDR: &str = "redis://127.0.0.1/";
 
@@ -49,8 +49,12 @@ struct ReturnError {
 
 impl fmt::Display for ReturnError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Expected: {}\n\
-                   Real:     {}", self.expected, self.real)
+        write!(
+            f,
+            "Expected: {}\n\
+                   Real:     {}",
+            self.expected, self.real
+        )
     }
 }
 
@@ -84,8 +88,7 @@ fn test_main() {
         let s = sender.clone();
 
         pool.execute(move || {
-            let r =
-                (test.func)(Box::new(()));
+            let r = (test.func)(Box::new(()));
 
             if let Err(e) = r {
                 // send error to main thread
@@ -100,7 +103,6 @@ fn test_main() {
         }
     }
 
-
     pool.join();
     eprintln!("ADMIN: wait for error for 3 seconds");
     if let Ok(err) = receiver.recv_timeout(Duration::from_secs(3)) {
@@ -113,13 +115,34 @@ fn test_main() {
 }
 
 const TEST_CASES: &'static [TestCase] = &[
-    TestCase { name: "ping server", func: test_ping },
-    TestCase { name: "simple set and get", func: test_simple_set_and_get },
-    TestCase { name: "simple del", func: test_simple_del },
-    TestCase { name: "simple incr and decr", func: test_simple_incr_decr },
-    TestCase { name: "simple mget", func: test_simple_mget },
-    TestCase { name: "simple list push and pop", func: test_simple_list_push_pop },
-    TestCase { name: "simple sort", func: test_simple_sort },
+    TestCase {
+        name: "ping server",
+        func: test_ping,
+    },
+    TestCase {
+        name: "simple set and get",
+        func: test_simple_set_and_get,
+    },
+    TestCase {
+        name: "simple del",
+        func: test_simple_del,
+    },
+    TestCase {
+        name: "simple incr and decr",
+        func: test_simple_incr_decr,
+    },
+    TestCase {
+        name: "simple mget",
+        func: test_simple_mget,
+    },
+    TestCase {
+        name: "simple list push and pop",
+        func: test_simple_list_push_pop,
+    },
+    TestCase {
+        name: "simple sort",
+        func: test_simple_sort,
+    },
 ];
 
 // simple tests
@@ -145,7 +168,6 @@ fn test_simple_set_and_get(_input: Box<dyn TestInputData>) -> TestResult {
 
     let ret: Option<String> = con.get("_not_exist")?;
     is_nil(ret)?;
-
 
     Ok(())
 }
@@ -297,7 +319,9 @@ fn establish_other(addr: &str) -> Result<redis::Connection, Box<dyn Error>> {
 }
 
 fn compare<S>(expected: S, real: String) -> TestResult
-    where S: PartialEq<String> + std::string::ToString {
+where
+    S: PartialEq<String> + std::string::ToString,
+{
     if expected == real {
         Ok(())
     } else {
@@ -320,7 +344,9 @@ fn compare_i64(expected: i64, real: i64) -> TestResult {
 }
 
 fn compare_vec<S>(expected: Vec<S>, real: Vec<String>) -> TestResult
-    where S: PartialEq<String> + std::fmt::Debug {
+where
+    S: PartialEq<String> + std::fmt::Debug,
+{
     if expected == real {
         Ok(())
     } else {
@@ -332,7 +358,9 @@ fn compare_vec<S>(expected: Vec<S>, real: Vec<String>) -> TestResult
 }
 
 fn is_nil<T>(real: Option<T>) -> TestResult
-    where T: std::fmt::Debug {
+where
+    T: std::fmt::Debug,
+{
     if real.is_none() {
         Ok(())
     } else {
@@ -345,7 +373,9 @@ fn is_nil<T>(real: Option<T>) -> TestResult
 }
 
 fn is_sorted<T>(v: &Vec<T>) -> TestResult
-    where T: std::cmp::Ord + Clone {
+where
+    T: std::cmp::Ord + Clone,
+{
     let mut v2 = v.to_vec();
     v2.sort();
     match *v == v2 {
@@ -353,8 +383,6 @@ fn is_sorted<T>(v: &Vec<T>) -> TestResult
         false => Err(Box::new(ReturnError {
             expected: "sorted vec".to_string(),
             real: "unsorted vec".to_string(),
-        }))
+        })),
     }
 }
-
-
