@@ -14,7 +14,7 @@ readme = "./README.md"
 
 [[bin]]
 name = "reredis-async"
-path = "src/async/main.rs"
+path = "src/asynchronous/main.rs"
 
 [dependencies]
 murmurhash64 = "0.3.1"
@@ -26,6 +26,8 @@ env_logger = "0.6.2"
 nix = "0.15.0"
 signal-hook = "0.1.10"
 rlua = "0.16.3"
+tokio = { version = "0.2", features = ["full"] }
+futures = "0.3"
 
 [dev-dependencies]
 threadpool = "1.7.1"
