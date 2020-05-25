@@ -14,6 +14,7 @@ use tokio::sync::oneshot;
 // use reredis::oom::oom;
 use reredis::asynchronous::client::{read_query_from_client, send_reply_to_client};
 use reredis::asynchronous::query::{QueryBuilder, QueryError};
+use reredis::asynchronous::server;
 use reredis::asynchronous::server::Server;
 use reredis::asynchronous::EnvConfig;
 use reredis::zalloc::Zalloc;
@@ -23,7 +24,7 @@ use std::rc::Rc;
 static A: Zalloc = Zalloc;
 
 async fn db_executor(
-    mut rx: mpsc::Receiver<(Vec<Vec<u8>>, oneshot::Sender<Result<(), ()>>)>,
+    mut rx: mpsc::Receiver<(Vec<Vec<u8>>, oneshot::Sender<Result<server::Reply, server::Error>>)>,
     mut server: Server,
 ) {
     println!("db_executor start running");
@@ -41,7 +42,7 @@ async fn db_executor(
 
 async fn handle_client(
     mut sock: TcpStream,
-    mut tx: mpsc::Sender<(Vec<Vec<u8>>, oneshot::Sender<Result<(), ()>>)>,
+    mut tx: mpsc::Sender<(Vec<Vec<u8>>, oneshot::Sender<Result<server::Reply, server::Error>>)>,
 ) {
     let (mut reader, mut writer) = sock.split();
     let mut query_builder = QueryBuilder::new();

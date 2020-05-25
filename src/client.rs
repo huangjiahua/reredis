@@ -87,6 +87,10 @@ impl Client {
         client
     }
 
+    pub fn new_client_handle() -> Client {
+        Self::new_default_client(Rc::new(RefCell::new(Fdp::Nil)))
+    }
+
     fn new_default_client(fd: Fd) -> Client {
         let token = Token(fd.as_ptr() as usize);
         Client {

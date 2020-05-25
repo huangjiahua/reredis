@@ -2,7 +2,7 @@ use crate::asynchronous::EnvConfig;
 use crate::asynchronous::ServerHandle;
 
 pub struct State {
-    handle: ServerHandle,
+    pub handle: ServerHandle,
 }
 
 impl State {

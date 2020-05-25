@@ -119,6 +119,10 @@ impl AeEventLoop {
         el
     }
 
+    pub fn new_handle() -> AeEventLoop {
+        Self::new(0)
+    }
+
     pub fn deregister_stream(&mut self, stream: &TcpStream) {
         self.poll.deregister(stream).unwrap();
     }
