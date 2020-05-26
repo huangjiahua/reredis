@@ -16,8 +16,8 @@ pub async fn read_query_from_client(
             Err(query::QueryError::NotEnough) => continue,
             Err(e) => {
                 builder.reset();
-                return Err(e)
-            },
+                return Err(e);
+            }
         }
     }
 }
@@ -32,9 +32,10 @@ pub async fn send_reply_to_client(
                 writer.write_all(&v).await.map_err(|_| ())?
             }
         }
-        Err(e) => {
-            writer.write_all(e.err_msg.as_bytes()).await.map_err(|_| ())?
-        }
+        Err(e) => writer
+            .write_all(e.err_msg.as_bytes())
+            .await
+            .map_err(|_| ())?,
     }
     Ok(())
 }

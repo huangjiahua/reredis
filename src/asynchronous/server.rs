@@ -1,10 +1,6 @@
-use std::sync::Arc;
-use tokio::sync::Mutex;
-
-use crate::asynchronous::{ClientHandle, ServerHandle, EnvConfig, EventLoopHandle};
+use crate::asynchronous::{ClientHandle, EnvConfig, EventLoopHandle, ServerHandle};
 use crate::command::lookup_command;
 use crate::object::Robj;
-use futures::StreamExt;
 
 pub struct Server {
     server_handle: ServerHandle,
@@ -41,6 +37,10 @@ impl Server {
         let reply = Reply::from_client_handle(&mut client_handle);
 
         Ok(reply)
+    }
+
+    pub fn port(&self) -> u16 {
+        self.server_handle.port
     }
 }
 

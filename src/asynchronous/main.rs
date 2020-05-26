@@ -2,17 +2,15 @@
 extern crate log;
 extern crate env_logger;
 
-use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
 
 use futures::stream::StreamExt;
-use tokio::net::{TcpListener, TcpStream};
-use tokio::task;
+use tokio::net::TcpStream;
 use tokio::prelude::*;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
-use tokio::time::timeout;
+use tokio::task;
+use tokio::time::timeout_at;
 
 // use reredis::env::{Env, REREDIS_VERSION, init_logger, Config};
 // use reredis::oom::oom;
@@ -20,27 +18,43 @@ use reredis::asynchronous::client::{read_query_from_client, send_reply_to_client
 use reredis::asynchronous::query::{QueryBuilder, QueryError};
 use reredis::asynchronous::server;
 use reredis::asynchronous::server::Server;
-use reredis::asynchronous::EnvConfig;
 use reredis::asynchronous::shared_state::SharedState;
-use reredis::env::init_logger;
+use reredis::asynchronous::EnvConfig;
+use reredis::asynchronous::timer;
+use reredis::env::{init_logger, REREDIS_VERSION};
 use reredis::zalloc::Zalloc;
 
 #[global_allocator]
 static A: Zalloc = Zalloc;
 
 async fn db_executor(
-    mut rx: mpsc::Receiver<(Vec<Vec<u8>>, oneshot::Sender<Result<server::Reply, server::Error>>)>,
+    mut rx: mpsc::Receiver<(
+        Vec<Vec<u8>>,
+        oneshot::Sender<Result<server::Reply, server::Error>>,
+    )>,
     mut server: Server,
     shared_state: Arc<SharedState>,
 ) {
-    println!("db_executor start running");
+    info!("Server started, Reredis version {}", REREDIS_VERSION);
+    // TODO: RDB load
+    info!(
+        "The server is now ready to accept connections on port {}",
+        server.port()
+    );
+
+    let mut timer = timer::Timer::new();
+
     while !shared_state.is_killed() {
-        let tm = timeout(Duration::from_secs(1), rx.recv());
+        let tm = timeout_at(timer.when(), rx.recv());
 
         let (args, t) = match tm.await {
             Ok(Some((args, t))) => (args, t),
             Ok(None) => break,
-            Err(_) => continue,
+            Err(_) => {
+                debug!("Server Cron should execute now...");
+                timer.update();
+                continue;
+            }
         };
 
         let res = server.execute(args);
@@ -52,7 +66,10 @@ async fn db_executor(
 
 async fn handle_client(
     mut sock: TcpStream,
-    mut tx: mpsc::Sender<(Vec<Vec<u8>>, oneshot::Sender<Result<server::Reply, server::Error>>)>,
+    mut tx: mpsc::Sender<(
+        Vec<Vec<u8>>,
+        oneshot::Sender<Result<server::Reply, server::Error>>,
+    )>,
 ) {
     let (mut reader, mut writer) = sock.split();
     let mut query_builder = QueryBuilder::new();
@@ -61,11 +78,15 @@ async fn handle_client(
         let args = match read_query_from_client(&mut query_builder, &mut reader).await {
             Ok(args) => args,
             Err(QueryError::EOF) => {
-                println!("Reading from client: {}", "Client closed connection");
-                break
-            },
+                debug!("Reading from client: {}", "Client closed connection");
+                break;
+            }
+            Err(QueryError::Protocol(_, err_msg)) => {
+                let _ = writer.write_all(err_msg.as_bytes()).await;
+                break;
+            }
             Err(e) => {
-                eprintln!("{:?}", e);
+                debug!("{:?}", e);
                 break;
             }
         };

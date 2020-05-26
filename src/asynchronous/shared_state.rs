@@ -10,9 +10,7 @@ impl SharedState {
     pub fn new() -> SharedState {
         let is_killed = Arc::new(AtomicBool::new(false));
         crate::server::set_up_signal_handling(&is_killed);
-        SharedState {
-            is_killed,
-        }
+        SharedState { is_killed }
     }
 
     pub fn is_killed(&self) -> bool {

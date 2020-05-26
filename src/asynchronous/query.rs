@@ -48,7 +48,7 @@ impl QueryBuilder {
 
     async fn build_inline_query(
         &mut self,
-        reader: &mut ReadHalf<'_>,
+        _reader: &mut ReadHalf<'_>,
     ) -> Result<Vec<Vec<u8>>, QueryError> {
         unimplemented!()
     }
@@ -90,7 +90,7 @@ impl QueryBuilder {
 
         self.is_buf_useful = false;
         let mut processed = 0;
-        let mut new_line = None;
+        let mut new_line;
 
         if self.bulk_size == 0 {
             assert_eq!(self.built_args.len(), 0);
