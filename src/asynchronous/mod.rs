@@ -9,3 +9,4 @@ pub mod server;
 pub mod stat;
 pub mod state;
 pub mod query;
+pub mod shared_state;

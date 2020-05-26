@@ -2,13 +2,17 @@
 extern crate log;
 extern crate env_logger;
 
-use futures::stream::StreamExt;
+use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
+
+use futures::stream::StreamExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task;
 use tokio::prelude::*;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+use tokio::time::timeout;
 
 // use reredis::env::{Env, REREDIS_VERSION, init_logger, Config};
 // use reredis::oom::oom;
@@ -17,8 +21,9 @@ use reredis::asynchronous::query::{QueryBuilder, QueryError};
 use reredis::asynchronous::server;
 use reredis::asynchronous::server::Server;
 use reredis::asynchronous::EnvConfig;
+use reredis::asynchronous::shared_state::SharedState;
+use reredis::env::init_logger;
 use reredis::zalloc::Zalloc;
-use std::rc::Rc;
 
 #[global_allocator]
 static A: Zalloc = Zalloc;
@@ -26,18 +31,23 @@ static A: Zalloc = Zalloc;
 async fn db_executor(
     mut rx: mpsc::Receiver<(Vec<Vec<u8>>, oneshot::Sender<Result<server::Reply, server::Error>>)>,
     mut server: Server,
+    shared_state: Arc<SharedState>,
 ) {
     println!("db_executor start running");
-    loop {
-        let (args, t) = match rx.recv().await {
-            Some((args, t)) => (args, t),
-            None => break,
+    while !shared_state.is_killed() {
+        let tm = timeout(Duration::from_secs(1), rx.recv());
+
+        let (args, t) = match tm.await {
+            Ok(Some((args, t))) => (args, t),
+            Ok(None) => break,
+            Err(_) => continue,
         };
 
         let res = server.execute(args);
 
         let _ = t.send(res);
     }
+    println!("caught signal to quit");
 }
 
 async fn handle_client(
@@ -95,7 +105,8 @@ async fn main() {
         );
     }
 
-    let server = Arc::new(Server::new(&config));
+    init_logger(config.log_level);
+
     let addr = format!("{}:{}", config.bind_addr, config.port);
     let mut listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
 
@@ -103,15 +114,15 @@ async fn main() {
 
     let (tx, rx) = mpsc::channel(10);
 
+    let shared_state = Arc::new(SharedState::new());
     let local = task::LocalSet::new();
-
     let local_runner = local.run_until(async move {
         let server = Server::new(&config_clone);
-        db_executor(rx, server).await;
+        db_executor(rx, server, shared_state).await;
     });
 
     tokio::spawn(async move {
-        println!("Server running on localhost");
+        warn!("Server running on localhost");
         let tx = tx;
         let mut incoming = listener.incoming();
         while let Some(socket_res) = incoming.next().await {

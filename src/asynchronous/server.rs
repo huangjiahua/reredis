@@ -1,33 +1,22 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::asynchronous::config::Config;
-use crate::asynchronous::stat::Stat;
-use crate::asynchronous::state::State;
-use crate::asynchronous::ClientHandle;
-use crate::asynchronous::{EnvConfig, EventLoopHandle};
+use crate::asynchronous::{ClientHandle, ServerHandle, EnvConfig, EventLoopHandle};
 use crate::command::lookup_command;
 use crate::object::Robj;
 use futures::StreamExt;
 
 pub struct Server {
-    state: State,
-    config: Config,
-    stat: Stat,
+    server_handle: ServerHandle,
     el_handle: EventLoopHandle,
 }
 
 impl Server {
     pub fn new(ec: &EnvConfig) -> Server {
-        let state = State::new(ec);
-        let config = Config::new(ec);
-        let stat = Stat::new();
+        let server_handle = ServerHandle::new_handle(ec);
         let el_handle = EventLoopHandle::new_handle();
-
         Server {
-            state,
-            config,
-            stat,
+            server_handle,
             el_handle,
         }
     }
@@ -45,7 +34,7 @@ impl Server {
 
         (&cmd.proc)(
             &mut client_handle,
-            &mut self.state.handle,
+            &mut self.server_handle,
             &mut self.el_handle,
         );
 

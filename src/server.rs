@@ -114,7 +114,6 @@ impl Server {
         let log_file = None;
 
         let shutdown_asap = Arc::new(AtomicBool::new(false));
-        set_up_signal_handling(&shutdown_asap);
 
         let reply_state = match config.master_host {
             Some(_) => ReplyState::Connect,
@@ -474,7 +473,7 @@ impl Server {
     }
 }
 
-fn set_up_signal_handling(sig_term_sign: &Arc<AtomicBool>) {
+pub fn set_up_signal_handling(sig_term_sign: &Arc<AtomicBool>) {
     signal_hook::flag::register(signal_hook::SIGTERM, Arc::clone(sig_term_sign)).unwrap();
     signal_hook::flag::register(signal_hook::SIGINT, Arc::clone(sig_term_sign)).unwrap();
     // ignore SIGPIPE and SIGHUP
