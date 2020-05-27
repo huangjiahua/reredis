@@ -1,6 +1,7 @@
 use crate::asynchronous::{ClientHandle, EnvConfig, EventLoopHandle, ServerHandle};
-use crate::command::lookup_command;
+use crate::command::{lookup_command, CMD_DENY_OOM};
 use crate::object::Robj;
+use crate::zalloc;
 
 pub struct Server {
     server_handle: ServerHandle,
@@ -18,12 +19,25 @@ impl Server {
     }
 
     pub fn execute(&mut self, mut args: Vec<Vec<u8>>) -> Result<Reply, Error> {
-        for arg in args.iter() {
-            println!("{}", std::str::from_utf8(arg).unwrap());
-        }
-
         let cmd =
             lookup_command(&args[0]).ok_or(Error::with_message("-Error unknown command\r\n"))?;
+
+        if (cmd.arity > 0 && cmd.arity as usize != args.len())
+            || (cmd.arity < 0 && (args.len() < (-cmd.arity) as usize))
+        {
+            return Err(Error::with_message("-Error wrong number of arguments\r\n"));
+        } else if self.max_memory() > 0
+            && cmd.flags & CMD_DENY_OOM != 0
+            && zalloc::allocated_memory() > self.max_memory()
+        {
+            return Err(Error::with_message(
+                "-ERR command not allowed when used memory > 'maxmemory'\r\n",
+            ));
+        }
+
+        // TODO: Auth
+
+        // TODO: Save dirty bit here
 
         let mut client_handle = ClientHandle::new_client_handle();
         client_handle.argv = args.drain(..).map(|x| Robj::from_bytes(x)).collect();
@@ -34,6 +48,8 @@ impl Server {
             &mut self.el_handle,
         );
 
+        // TODO: feed slaves and monitors here
+
         let reply = Reply::from_client_handle(&mut client_handle);
 
         Ok(reply)
@@ -41,6 +57,10 @@ impl Server {
 
     pub fn port(&self) -> u16 {
         self.server_handle.port
+    }
+
+    pub fn max_memory(&self) -> usize {
+        self.server_handle.max_memory
     }
 }
 

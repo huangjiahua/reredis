@@ -20,7 +20,8 @@ impl Timer {
     }
 
     pub fn update(&mut self) {
-        self.when = self.when
+        self.when = self
+            .when
             .checked_add(Duration::from_millis(LOOP_DURATION))
             .expect("Time value overflow");
     }

@@ -36,24 +36,39 @@ impl QueryBuilder {
         self.built_args.clear();
     }
 
-    pub async fn build_query(
-        &mut self,
-        reader: &mut ReadHalf<'_>,
-    ) -> Result<Vec<Vec<u8>>, QueryError> {
-        if self.bulk_size == 0 && self.buf.len() > 0 && self.buf[0] != b'*' {
-            return self.build_inline_query(reader).await;
+    async fn build_inline_query(&mut self) -> Result<Vec<Vec<u8>>, QueryError> {
+        let new_line = self
+            .buf
+            .iter()
+            .enumerate()
+            .find(|(_, ch)| **ch == b'\r')
+            .map(|x| x.0);
+
+        let n = match new_line {
+            None => return Err(QueryError::NotEnough),
+            Some(n) => n,
+        };
+
+        if n + 1 >= self.buf.len() {
+            return Err(QueryError::NotEnough);
         }
-        self.build_bulk_query(reader).await
+
+        let command = match std::str::from_utf8(&self.buf[..n]) {
+            Ok(s) => s,
+            Err(_) => return Err(QueryError::MalFormed),
+        };
+
+        let args = command
+            .split_ascii_whitespace()
+            .map(|x| x.as_bytes().to_vec())
+            .collect();
+
+        self.buf.drain(..n + 2);
+
+        Ok(args)
     }
 
-    async fn build_inline_query(
-        &mut self,
-        _reader: &mut ReadHalf<'_>,
-    ) -> Result<Vec<Vec<u8>>, QueryError> {
-        unimplemented!()
-    }
-
-    async fn build_bulk_query(
+    pub async fn build_query(
         &mut self,
         reader: &mut ReadHalf<'_>,
     ) -> Result<Vec<Vec<u8>>, QueryError> {
@@ -77,6 +92,9 @@ impl QueryBuilder {
         }
         self.buf.resize(buf_len + n_read, 0u8);
         self.is_buf_useful = true;
+        if self.bulk_size == 0 && self.buf[0] != b'*' {
+            return self.build_inline_query().await;
+        }
 
         self.build_bulk_query_from_buf()?;
 
@@ -143,7 +161,10 @@ impl QueryBuilder {
                 .find(|(_, ch)| **ch == b'\r')
                 .map(|x| x.0);
 
-            let new_line_pos = new_line.ok_or(QueryError::NotEnough)?;
+            let new_line_pos = match new_line {
+                None => break,
+                Some(n) => n,
+            };
 
             if processed > self.buf.len() - 2 {
                 break;
@@ -180,6 +201,12 @@ impl QueryBuilder {
             if self.buf.len() - begin_pos < ll + 2 {
                 break;
             } else {
+                if self.buf[begin_pos + ll] != b'\r' || self.buf[begin_pos + ll + 1] != b'\n' {
+                    return Err(QueryError::Protocol(
+                        begin_pos,
+                        "-Err Protocol Error: invalid break line, expect \"\\r\\n\"".to_string(),
+                    ));
+                }
                 let arg = self.buf[begin_pos..begin_pos + ll].to_vec();
                 processed = begin_pos + ll + 2;
                 self.bulk_size -= 1;
