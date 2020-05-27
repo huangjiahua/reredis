@@ -6,6 +6,7 @@ pub use crate::server::Server as ServerHandle;
 pub mod client;
 pub mod common;
 pub mod config;
+pub mod executor;
 pub mod query;
 pub mod server;
 pub mod shared_state;
