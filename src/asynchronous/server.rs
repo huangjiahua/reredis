@@ -2,6 +2,7 @@ use crate::asynchronous::{ClientHandle, EnvConfig, EventLoopHandle, ServerHandle
 use crate::command::{lookup_command, CMD_DENY_OOM};
 use crate::object::Robj;
 use crate::zalloc;
+use std::rc::Rc;
 
 pub struct Server {
     server_handle: ServerHandle,
@@ -75,7 +76,10 @@ impl Reply {
         let reply = handle
             .reply
             .drain(..)
-            .map(|x| x.borrow().string().to_vec())
+            .map(|x| match Rc::try_unwrap(x) {
+                Ok(o) => o.into_inner().unwrap_data().unwrap_bytes(),
+                Err(ro) => ro.borrow().string().to_vec(),
+            })
             .collect();
 
         Reply { reply }

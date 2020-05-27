@@ -50,6 +50,9 @@ pub trait ObjectData {
     fn bytes_ref(&self) -> &[u8] {
         panic!("This is not a byte slice")
     }
+    fn unwrap_bytes(self: Box<Self>) -> Vec<u8> {
+        panic!("This is not a byte Vec")
+    }
     fn sds_ref(&self) -> &str {
         panic!("This is not an Sds string")
     }
@@ -720,6 +723,10 @@ impl Robj {
             others,
         }
     }
+
+    pub fn unwrap_data(self) -> Pointer {
+        self.ptr
+    }
 }
 
 impl DictPartialEq for RobjPtr {
@@ -731,6 +738,9 @@ impl DictPartialEq for RobjPtr {
 impl ObjectData for Vec<u8> {
     fn bytes_ref(&self) -> &[u8] {
         self
+    }
+    fn unwrap_bytes(self: Box<Self>) -> Vec<u8> {
+        *self
     }
     fn raw_bytes(&self) -> &[u8] {
         self
