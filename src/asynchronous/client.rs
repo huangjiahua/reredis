@@ -33,7 +33,7 @@ pub async fn send_reply_to_client(
             }
         }
         Err(e) => writer
-            .write_all(e.err_msg.as_bytes())
+            .write_all(e.err_msg().as_bytes())
             .await
             .map_err(|_| ())?,
     }

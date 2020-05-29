@@ -1,6 +1,8 @@
 use crate::asynchronous::client::{read_query_from_client, send_reply_to_client};
 use crate::asynchronous::common::DBArgs;
+use crate::asynchronous::preprocess::{Preprocessed, Preprocessor};
 use crate::asynchronous::query::{QueryBuilder, QueryError};
+use crate::asynchronous::server;
 use crate::asynchronous::server::Server;
 use crate::asynchronous::shared_state::SharedState;
 use crate::asynchronous::timer;
@@ -8,7 +10,7 @@ use crate::env::REREDIS_VERSION;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::prelude::*;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tokio::time::timeout_at;
 
 pub async fn db_executor(
@@ -28,8 +30,8 @@ pub async fn db_executor(
     while !shared_state.is_killed() {
         let tm = timeout_at(timer.when(), rx.recv());
 
-        let (args, t) = match tm.await {
-            Ok(Some((args, t))) => (args, t),
+        let mut db_args = match tm.await {
+            Ok(Some(a)) => a,
             Ok(None) => break,
             Err(_) => {
                 debug!("Server Cron should execute now...");
@@ -38,16 +40,21 @@ pub async fn db_executor(
             }
         };
 
-        let res = server.execute(args);
+        let res = server.execute(&mut db_args);
 
-        let _ = t.send(res);
+        let _ = db_args.chan.send(res);
     }
     println!("caught signal to quit");
 }
 
-pub async fn handle_client(mut sock: TcpStream, mut tx: mpsc::Sender<DBArgs>) {
+pub async fn handle_client(
+    mut sock: TcpStream,
+    mut tx: mpsc::Sender<DBArgs>,
+    shared_state: Arc<SharedState>,
+) {
     let (mut reader, mut writer) = sock.split();
     let mut query_builder = QueryBuilder::new();
+    let mut preprocessor = Preprocessor::new(shared_state);
 
     loop {
         let args = match read_query_from_client(&mut query_builder, &mut reader).await {
@@ -66,16 +73,23 @@ pub async fn handle_client(mut sock: TcpStream, mut tx: mpsc::Sender<DBArgs>) {
             }
         };
 
-        let (t, r) = oneshot::channel();
+        let reply = match preprocessor.process(args) {
+            Preprocessed::Done(r) => r,
+            Preprocessed::NotYet((db_args, r)) => {
+                if let Err(_) = tx.send(db_args).await {
+                    break;
+                }
+                let reply = match r.await {
+                    Ok(reply) => reply,
+                    Err(_) => break,
+                };
+                reply
+            }
+        };
 
-        if let Err(_) = tx.send((args, t)).await {
+        if let Err(server::Error::Quit) = reply {
             break;
         }
-
-        let reply = match r.await {
-            Ok(reply) => reply,
-            Err(_) => break,
-        };
 
         if let Err(_) = send_reply_to_client(&mut writer, reply).await {
             break;

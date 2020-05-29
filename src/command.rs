@@ -25,6 +25,7 @@ pub const CMD_BULK: i32 = 0b0001;
 pub const CMD_INLINE: i32 = 0b0010;
 pub const CMD_DENY_OOM: i32 = 0b0100;
 pub const CMD_LUA: i32 = 0b1000;
+pub const CMD_PREPROCESS: i32 = 0b10000;
 
 pub struct Command {
     pub name: &'static str,
@@ -1765,7 +1766,7 @@ const CMD_TABLE: &[Command] = &[
         name: "select",
         proc: select_command,
         arity: 2,
-        flags: CMD_INLINE | CMD_LUA,
+        flags: CMD_INLINE | CMD_LUA | CMD_PREPROCESS,
     },
     Command {
         name: "move",
@@ -1813,13 +1814,13 @@ const CMD_TABLE: &[Command] = &[
         name: "ping",
         proc: ping_command,
         arity: 1,
-        flags: CMD_INLINE,
+        flags: CMD_INLINE | CMD_PREPROCESS,
     },
     Command {
         name: "echo",
         proc: echo_command,
         arity: 2,
-        flags: CMD_INLINE,
+        flags: CMD_INLINE | CMD_PREPROCESS,
     },
     Command {
         name: "save",
@@ -1915,7 +1916,7 @@ const CMD_TABLE: &[Command] = &[
         name: "command",
         proc: command_command,
         arity: 1,
-        flags: CMD_INLINE,
+        flags: CMD_INLINE | CMD_PREPROCESS,
     },
 ];
 

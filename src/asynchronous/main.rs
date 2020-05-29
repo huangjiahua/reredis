@@ -47,22 +47,24 @@ async fn main() {
 
     let (tx, rx) = mpsc::channel(10);
 
-    let shared_state = Arc::new(SharedState::new());
+    let shared_state = Arc::new(SharedState::new(&config));
+
+    let shared_state_cloned = Arc::clone(&shared_state);
     let local = task::LocalSet::new();
     let local_runner = local.run_until(async move {
         let server = Server::new(&config_clone);
-        db_executor(rx, server, shared_state).await;
+        db_executor(rx, server, shared_state_cloned).await;
     });
 
     tokio::spawn(async move {
-        warn!("Server running on localhost");
+        info!("Server running on localhost");
         let tx = tx;
         let mut incoming = listener.incoming();
         while let Some(socket_res) = incoming.next().await {
             match socket_res {
                 Ok(socket) => {
                     println!("Accepted connection from {:?}", socket.peer_addr());
-                    tokio::spawn(handle_client(socket, tx.clone()));
+                    tokio::spawn(handle_client(socket, tx.clone(), Arc::clone(&shared_state)));
                 }
                 Err(err) => {
                     // Handle error by printing to STDOUT.

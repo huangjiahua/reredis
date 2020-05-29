@@ -1,5 +1,6 @@
+use crate::asynchronous::common::DBArgs;
 use crate::asynchronous::{ClientHandle, EnvConfig, EventLoopHandle, ServerHandle};
-use crate::command::{lookup_command, CMD_DENY_OOM};
+use crate::command::CMD_DENY_OOM;
 use crate::object::Robj;
 use crate::zalloc;
 use std::rc::Rc;
@@ -19,21 +20,14 @@ impl Server {
         }
     }
 
-    pub fn execute(&mut self, mut args: Vec<Vec<u8>>) -> Result<Reply, Error> {
-        let cmd =
-            lookup_command(&args[0]).ok_or(Error::with_message("-Error unknown command\r\n"))?;
+    pub fn execute(&mut self, args: &mut DBArgs) -> Result<Reply, Error> {
+        let cmd = args.cmd;
 
-        if (cmd.arity > 0 && cmd.arity as usize != args.len())
-            || (cmd.arity < 0 && (args.len() < (-cmd.arity) as usize))
-        {
-            return Err(Error::with_message("-Error wrong number of arguments\r\n"));
-        } else if self.max_memory() > 0
+        if self.max_memory() > 0
             && cmd.flags & CMD_DENY_OOM != 0
             && zalloc::allocated_memory() > self.max_memory()
         {
-            return Err(Error::with_message(
-                "-ERR command not allowed when used memory > 'maxmemory'\r\n",
-            ));
+            return Err(Error::OOM);
         }
 
         // TODO: Auth
@@ -41,7 +35,8 @@ impl Server {
         // TODO: Save dirty bit here
 
         let mut client_handle = ClientHandle::new_client_handle();
-        client_handle.argv = args.drain(..).map(|x| Robj::from_bytes(x)).collect();
+        client_handle.argv = args.args.drain(..).map(|x| Robj::from_bytes(x)).collect();
+        client_handle.db_idx = args.db_id;
 
         (&cmd.proc)(
             &mut client_handle,
@@ -72,6 +67,30 @@ pub struct Reply {
 }
 
 impl Reply {
+    pub fn new(reply: Vec<Vec<u8>>) -> Reply {
+        Reply { reply }
+    }
+
+    pub fn from_single(r: Vec<u8>) -> Reply {
+        let reply = vec![r];
+        Reply { reply }
+    }
+
+    pub fn from_str(s: &str) -> Reply {
+        let reply = vec![s.as_bytes().to_vec()];
+        Reply { reply }
+    }
+
+    pub fn ok() -> Reply {
+        let reply = vec!["+OK\r\n".as_bytes().to_vec()];
+        Reply { reply }
+    }
+
+    pub fn pong() -> Reply {
+        let reply = vec!["+PONG\r\n".as_bytes().to_vec()];
+        Reply { reply }
+    }
+
     fn from_client_handle(handle: &mut ClientHandle) -> Reply {
         let reply = handle
             .reply
@@ -86,14 +105,20 @@ impl Reply {
     }
 }
 
-pub struct Error {
-    pub err_msg: String,
+pub enum Error {
+    UnknownCommand,
+    WrongArgNum,
+    OOM,
+    Quit,
 }
 
 impl Error {
-    fn with_message(s: &str) -> Error {
-        Error {
-            err_msg: s.to_string(),
+    pub fn err_msg(&self) -> &str {
+        match self {
+            Self::UnknownCommand => "-Error unknown command\r\n",
+            Self::WrongArgNum => "-Error wrong number of arguments\r\n",
+            Self::OOM => "-ERR command not allowed when used memory > 'maxmemory'\r\n",
+            Self::Quit => "-ERR you should not see this message\r\n",
         }
     }
 }
