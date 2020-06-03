@@ -1,13 +1,16 @@
 use crate::env::REREIDS_IO_BUF_LEN;
 use crate::util::{bytes_to_i64, bytes_to_usize};
+use std::time::Duration;
 use tokio::net::tcp::ReadHalf;
 use tokio::prelude::*;
+use tokio::time::timeout;
 
 #[derive(Debug, Clone)]
 pub enum QueryError {
     NotEnough,
     MalFormed,
     EOF,
+    ReadTimeOut,
     IO(tokio::io::ErrorKind),
     Protocol(usize, String),
 }
@@ -17,15 +20,17 @@ pub struct QueryBuilder {
     is_buf_useful: bool,
     bulk_size: usize,
     built_args: Vec<Vec<u8>>,
+    read_timeout: Option<usize>,
 }
 
 impl QueryBuilder {
-    pub fn new() -> QueryBuilder {
+    pub fn new(read_timeout: Option<usize>) -> QueryBuilder {
         QueryBuilder {
             buf: vec![],
             is_buf_useful: false,
             bulk_size: 0,
             built_args: vec![],
+            read_timeout,
         }
     }
 
@@ -83,10 +88,12 @@ impl QueryBuilder {
         let buf_len = self.buf.len();
         self.buf.resize(buf_len + REREIDS_IO_BUF_LEN, 0u8);
 
-        let n_read = match reader.read(&mut self.buf[buf_len..]).await {
-            Ok(n) => n,
-            Err(e) => return Err(QueryError::IO(e.kind())),
-        };
+        let n_read =
+            match Self::read_from_reader(reader, &mut self.buf[buf_len..], self.read_timeout).await
+            {
+                Ok(n) => n,
+                Err(e) => return Err(e),
+            };
         if n_read == 0 {
             return Err(QueryError::EOF);
         }
@@ -230,5 +237,20 @@ impl QueryBuilder {
         let mut args = vec![];
         std::mem::swap(&mut self.built_args, &mut args);
         args
+    }
+
+    async fn read_from_reader(
+        reader: &mut ReadHalf<'_>,
+        buf: &mut [u8],
+        read_timeout: Option<usize>,
+    ) -> Result<usize, QueryError> {
+        let fut = reader.read(buf);
+        match read_timeout {
+            None => fut.await.map_err(|e| QueryError::IO(e.kind())),
+            Some(t) => match timeout(Duration::from_secs(t as u64), fut).await {
+                Ok(r) => r.map_err(|e| QueryError::IO(e.kind())),
+                Err(_) => Err(QueryError::ReadTimeOut),
+            },
+        }
     }
 }

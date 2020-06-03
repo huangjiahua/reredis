@@ -53,7 +53,7 @@ pub async fn handle_client(
     shared_state: Arc<SharedState>,
 ) {
     let (mut reader, mut writer) = sock.split();
-    let mut query_builder = QueryBuilder::new();
+    let mut query_builder = QueryBuilder::new(shared_state.max_idle_time);
     let mut preprocessor = Preprocessor::new(shared_state);
 
     loop {
