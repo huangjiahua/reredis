@@ -1,14 +1,16 @@
 use crate::asynchronous::common::DBArgs;
+use crate::asynchronous::shared_state::SharedState;
 use crate::asynchronous::{ClientHandle, EnvConfig, EventLoopHandle, ServerHandle};
 use crate::command::CMD_DENY_OOM;
+use crate::env::REREDIS_EXPIRE_LOOKUPS_PER_CRON;
 use crate::object::Robj;
 use crate::{rdb, zalloc};
 use nix::sys::wait::*;
 use nix::unistd::Pid;
-use std::rc::Rc;
-use std::time::SystemTime;
-use crate::env::REREDIS_EXPIRE_LOOKUPS_PER_CRON;
 use std::process::exit;
+use std::rc::Rc;
+use std::sync::Arc;
+use std::time::SystemTime;
 
 pub struct Server {
     server_handle: ServerHandle,
@@ -56,7 +58,7 @@ impl Server {
         Ok(reply)
     }
 
-    pub fn cron(&mut self) {
+    pub fn cron(&mut self, shared_state: &Arc<SharedState>) {
         self.server_handle.cron_loops += 1;
 
         self.server_handle.used_memory = zalloc::allocated_memory();
@@ -78,7 +80,11 @@ impl Server {
 
         // TODO: show connected clients
         if loops % 5 == 0 {
-            debug!("{} bytes in use", self.server_handle.used_memory);
+            debug!(
+                "{} clients connected, {} bytes in use",
+                Arc::strong_count(&shared_state) - 2,
+                self.server_handle.used_memory
+            );
         }
 
         if self.server_handle.bg_save_in_progress {

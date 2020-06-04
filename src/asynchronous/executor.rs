@@ -35,7 +35,7 @@ pub async fn db_executor(
             Ok(None) => break,
             Err(_) => {
                 timer.update();
-                server.cron();
+                server.cron(&shared_state);
                 continue;
             }
         };
