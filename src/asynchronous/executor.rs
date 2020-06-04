@@ -34,8 +34,8 @@ pub async fn db_executor(
             Ok(Some(a)) => a,
             Ok(None) => break,
             Err(_) => {
-                debug!("Server Cron should execute now...");
                 timer.update();
+                server.cron();
                 continue;
             }
         };
@@ -44,7 +44,7 @@ pub async fn db_executor(
 
         let _ = db_args.chan.send(res);
     }
-    println!("caught signal to quit");
+    server.prepare_shutdown();
 }
 
 pub async fn handle_client(

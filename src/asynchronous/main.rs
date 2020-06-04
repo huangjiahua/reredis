@@ -52,7 +52,8 @@ async fn main() {
     let shared_state_cloned = Arc::clone(&shared_state);
     let local = task::LocalSet::new();
     let local_runner = local.run_until(async move {
-        let server = Server::new(&config_clone);
+        let mut server = Server::new(&config_clone);
+        server.load_rdb();
         db_executor(rx, server, shared_state_cloned).await;
     });
 

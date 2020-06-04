@@ -57,8 +57,10 @@ pub fn rdb_save_in_background(server: &mut Server) -> Result<(), ()> {
             return Ok(());
         }
         Ok(ForkResult::Child) => {
-            let fd = server.fd.borrow().unwrap_listener().as_raw_fd();
-            let _ = nix::unistd::close(fd);
+            if server.fd.borrow().is_listener() {
+                let fd = server.fd.borrow().unwrap_listener().as_raw_fd();
+                let _ = nix::unistd::close(fd);
+            }
             if let Ok(()) = rdb_save(server) {
                 exit(0);
             } else {
