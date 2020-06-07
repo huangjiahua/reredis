@@ -6,6 +6,7 @@ use std::sync::Arc;
 pub struct SharedState {
     is_killed: Arc<AtomicBool>,
     db_cnt: AtomicUsize,
+    password: Option<String>,
     pub max_idle_time: Option<usize>,
 }
 
@@ -18,19 +19,32 @@ impl SharedState {
         } else {
             None
         };
+        let password = config.require_pass.clone();
         crate::server::set_up_signal_handling(&is_killed);
         SharedState {
             is_killed,
             db_cnt,
+            password,
             max_idle_time,
         }
     }
 
     pub fn is_killed(&self) -> bool {
-        return self.is_killed.load(Ordering::SeqCst);
+        self.is_killed.load(Ordering::SeqCst)
     }
 
     pub fn db_cnt(&self) -> usize {
-        return self.db_cnt.load(Ordering::Acquire);
+        self.db_cnt.load(Ordering::Acquire)
+    }
+
+    pub fn require_pass(&self) -> bool {
+        self.password.is_some()
+    }
+
+    pub fn auth_pass(&self, pw: &[u8]) -> bool {
+        match self.password.as_ref() {
+            None => true,
+            Some(p) => p.as_bytes() == pw,
+        }
     }
 }

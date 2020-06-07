@@ -1808,7 +1808,7 @@ const CMD_TABLE: &[Command] = &[
         name: "auth",
         proc: auth_command,
         arity: 2,
-        flags: CMD_INLINE,
+        flags: CMD_INLINE | CMD_PREPROCESS,
     },
     Command {
         name: "ping",

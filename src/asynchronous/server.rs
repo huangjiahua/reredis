@@ -37,8 +37,6 @@ impl Server {
             return Err(Error::OOM);
         }
 
-        // TODO: Auth
-
         // TODO: Save dirty bit here
 
         let mut client_handle = ClientHandle::new_client_handle();
@@ -229,6 +227,7 @@ pub enum Error {
     WrongArgNum,
     OOM,
     Quit,
+    NotPermitted,
 }
 
 impl Error {
@@ -237,6 +236,7 @@ impl Error {
             Self::UnknownCommand => "-Error unknown command\r\n",
             Self::WrongArgNum => "-Error wrong number of arguments\r\n",
             Self::OOM => "-ERR command not allowed when used memory > 'maxmemory'\r\n",
+            Self::NotPermitted => "-ERR operation not permitted\r\n",
             Self::Quit => "-ERR you should not see this message\r\n",
         }
     }

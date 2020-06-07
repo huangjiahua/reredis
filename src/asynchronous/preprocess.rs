@@ -15,6 +15,7 @@ pub enum Preprocessed {
 pub struct Preprocessor {
     db_id: usize,
     shared_state: Arc<SharedState>,
+    authenticate: bool,
 }
 
 impl Preprocessor {
@@ -22,6 +23,7 @@ impl Preprocessor {
         Preprocessor {
             db_id: 0,
             shared_state: ss,
+            authenticate: false,
         }
     }
 
@@ -39,6 +41,10 @@ impl Preprocessor {
             || (cmd.arity < 0 && (args.len() < (-cmd.arity) as usize))
         {
             return Preprocessed::Done(Err(Error::WrongArgNum));
+        }
+
+        if self.shared_state.require_pass() && !self.authenticate && cmd.name != "auth" {
+            return Preprocessed::Done(Err(Error::NotPermitted));
         }
 
         if cmd.flags & CMD_PREPROCESS != 0 {
@@ -66,6 +72,9 @@ impl Preprocessor {
         }
         if cmd.name == "echo" {
             return self.execute_echo(args);
+        }
+        if cmd.name == "auth" {
+            return self.execute_auth(args);
         }
         if cmd.name == "command" {
             return Preprocessed::Done(Ok(Reply::ok()));
@@ -95,5 +104,13 @@ impl Preprocessor {
         let l = format!("${}\r\n", args[1].len()).as_bytes().to_vec();
         let r = vec![l, args.remove(1), "\r\n".as_bytes().to_vec()];
         Preprocessed::Done(Ok(Reply::new(r)))
+    }
+
+    fn execute_auth(&mut self, args: Vec<Vec<u8>>) -> Preprocessed {
+        if self.shared_state.auth_pass(&args[1]) {
+            self.authenticate = true;
+            return Preprocessed::Done(Ok(Reply::ok()));
+        }
+        return Preprocessed::Done(Ok(Reply::from_str("-ERR\r\n")));
     }
 }
