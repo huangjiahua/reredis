@@ -7,6 +7,10 @@ reredis is a reimplementation of [Redis](https://redis.io/) (server) in Rust pro
 
 Licensed under BSD 3-Clause.
 
+## HEADLINES!
+
+Async version of reredis is coming in async branch!
+
 ## Building reredis
 
 reredis can be compiled on all *nix systems that supports Rust toolchain(but tested only on Linux and MacOS).
