@@ -1,3 +1,5 @@
+![reredis-pic](https://storage.googleapis.com/gawa-storage-x/reredis-27x9.jpg)
+
 # reredis
 
 reredis is a reimplementation of [Redis](https://redis.io/) (server) in Rust programming language. The current equivalent version of Redis is 1.x - 2.x. It supports Linux and MacOS(it depends on Unix API like fork, so Windows version is not available now).
@@ -9,7 +11,7 @@ Licensed under BSD 3-Clause.
 
 ## Async Reredis
 
-In this branch, reredis will be redesigned to use async/await feature of rust.
+In this branch, reredis will be redesigned to use async/await feature of rust. There is a blog on this project [here](https://jiahuah.com/content/fa92).
 
 ## Building reredis
 
