@@ -10,7 +10,7 @@ Licensed under BSD 3-Clause.
 
 ## HEADLINES!
 
-Async version of reredis is coming in async branch!
+Async version of reredis is coming in [async branch](https://github.com/huangjiahua/reredis/tree/async)! And there is blogs on this project [here](https://jiahuah.com/content/fa92)!
 
 ## Building reredis
 
