@@ -144,4 +144,4 @@ reredis is a reimplementation of Redis, and its protocol is compatible with Redi
 
 ## Clients
 
-Since the protocal is compatible with Redis. All clients of Redis can be used with reredis, like [redis-rs](https://github.com/mitsuhiko/redis-rs) in Rust. There is currently on implementation of `redis-cli` in my project, but I'm working on it. 
+Since the protocol is compatible with Redis. All clients of Redis can be used with reredis, like [redis-rs](https://github.com/mitsuhiko/redis-rs) in Rust. There is currently on implementation of `redis-cli` in my project, but I'm working on it. 
