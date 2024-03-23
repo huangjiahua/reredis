@@ -157,7 +157,7 @@ impl<T> LinkedList<T> {
     pub fn append(&mut self, other: &mut Self) {
         match self.tail {
             None => mem::swap(self, other),
-            Some(mut tail) => {
+            Some(tail) => {
                 if let Some(other_head) = other.head.take() {
                     unsafe {
                         (*tail).next = Some(other_head);
@@ -251,7 +251,7 @@ impl<T> LinkedList<T> {
 
         unsafe {
             second_part_head = (*split_node).next.take();
-            if let Some(mut head) = second_part_head {
+            if let Some(head) = second_part_head {
                 (*head).prev = None;
             }
         }
@@ -270,7 +270,7 @@ impl<T> LinkedList<T> {
 
     pub fn set_off(&mut self, at: usize, elt: T) {
         assert!(at <= self.len(), "Cannot split off at a nonexistent index");
-        let mut node = self.index_off(at);
+        let node = self.index_off(at);
         node.element = elt;
     }
 
