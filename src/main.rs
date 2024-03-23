@@ -34,11 +34,11 @@ fn main() {
 
     info!("Server started, Reredis version {}", REREDIS_VERSION);
 
-    if let Ok(_) = env.rdb_load() {
+    if env.rdb_load().is_ok() {
         info!("DB loaded from disk");
     }
 
-    if let Err(_) = env.create_first_file_event() {
+    if env.create_first_file_event().is_err() {
         oom("creating file event");
     }
 

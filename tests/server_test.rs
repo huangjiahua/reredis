@@ -69,7 +69,7 @@ fn test_main() {
         let mut env = Env::new(&config);
         env.server.clean_rdb = true;
         env.init_server();
-        if let Err(_) = env.create_first_file_event() {
+        if env.create_first_file_event().is_err() {
             oom("creating file event");
         }
         env.ae_main();
@@ -89,7 +89,7 @@ fn test_main() {
 
             if let Err(e) = r {
                 // send error to main thread
-                s.send(format!("\n{}: \n{}\n", test.name, e.to_string()));
+                s.send(format!("\n{}: \n{}\n", test.name, e));
             } else {
                 error!("{} .. ok", test.name);
             }
@@ -112,7 +112,7 @@ fn test_main() {
     let _ = handle.join();
 }
 
-const TEST_CASES: &'static [TestCase] = &[
+const TEST_CASES: &[TestCase] = &[
     TestCase { name: "ping server", func: test_ping },
     TestCase { name: "simple set and get", func: test_simple_set_and_get },
     TestCase { name: "simple del", func: test_simple_del },
@@ -187,14 +187,14 @@ fn test_simple_mget(_input: Box<dyn TestInputData>) -> TestResult {
     error!("ready to mget");
     let mut con = establish()?;
     for j in 0..3 {
-        let _: () = con.set(&format!("key{}", j), &j.to_string())?;
+        con.set(&format!("key{}", j), &j.to_string())?;
     }
 
     let ret: Vec<Option<String>> = con.get(&["key0", "key1", "key2"])?;
     for j in 0..3 {
         // TODO: change this
         let s = ret[j].as_ref().unwrap();
-        let _ = compare(j.to_string(), s.clone())?;
+        compare(j.to_string(), s.clone())?;
     }
     Ok(())
 }
@@ -205,45 +205,45 @@ fn test_simple_list_push_pop(_input: Box<dyn TestInputData>) -> TestResult {
 
     // test lpush
     let ret: i64 = con.lpush("_list_simple_lpush", &["1", "2", "3", "4", "5"])?;
-    let _ = compare_i64(5, ret)?;
+    compare_i64(5, ret)?;
 
     let ret: Vec<String> = con.lrange("_list_simple_lpush", 0, -1)?;
-    let _ = compare_vec(vec!["5", "4", "3", "2", "1"], ret)?;
+    compare_vec(vec!["5", "4", "3", "2", "1"], ret)?;
 
     // test rpush
     let ret: i64 = con.rpush("_list_simple_rpush", &["1", "2", "3", "4", "5"])?;
-    let _ = compare_i64(5, ret)?;
+    compare_i64(5, ret)?;
 
     let ret: Vec<String> = con.lrange("_list_simple_rpush", 0, -1)?;
-    let _ = compare_vec(vec!["1", "2", "3", "4", "5"], ret)?;
+    compare_vec(vec!["1", "2", "3", "4", "5"], ret)?;
 
     // test lpop
     let ret: String = con.lpop("_list_simple_rpush")?;
-    let _ = compare("1", ret)?;
+    compare("1", ret)?;
     let ret: String = con.lpop("_list_simple_rpush")?;
-    let _ = compare("2", ret)?;
+    compare("2", ret)?;
 
     // test rpop
     let ret: String = con.rpop("_list_simple_rpush")?;
-    let _ = compare("5", ret)?;
+    compare("5", ret)?;
     let ret: String = con.rpop("_list_simple_rpush")?;
-    let _ = compare("4", ret)?;
+    compare("4", ret)?;
 
     let ret: i64 = con.llen("_list_simple_rpush")?;
-    let _ = compare_i64(1, ret)?;
+    compare_i64(1, ret)?;
 
     // test pop empty
     let ret: Option<String> = con.rpop("_no_such_list")?;
-    let _ = is_nil(ret)?;
+    is_nil(ret)?;
     let ret: Option<String> = con.lpop("_no_such_list")?;
-    let _ = is_nil(ret)?;
+    is_nil(ret)?;
 
     // test lindex
     let ret: String = con.lindex("_list_simple_lpush", 0)?;
-    let _ = compare("5", ret)?;
+    compare("5", ret)?;
 
     let ret: Option<String> = con.lindex("_list_simple_lpush", 100)?;
-    let _ = is_nil(ret)?;
+    is_nil(ret)?;
     Ok(())
 }
 
@@ -252,13 +252,13 @@ fn test_simple_lset(_input: Box<dyn TestInputData>) -> TestResult {
     let mut con = establish()?;
 
     let ret: i64 = con.rpush("_list_simple_lset", &["1", "2", "3", "4"])?;
-    let _ = compare_i64(4, ret)?;
+    compare_i64(4, ret)?;
 
     let ret: String = con.lset("_list_simple_lset", 3, "5")?;
-    let _ = compare("OK".to_string(), ret)?;
+    compare("OK".to_string(), ret)?;
 
     let ret: String = con.lindex("_list_simple_lset", 3)?;
-    let _ = compare("5", ret)?;
+    compare("5", ret)?;
 
     Ok(())
 }
@@ -270,7 +270,7 @@ fn test_simple_sort(_input: Box<dyn TestInputData>) -> TestResult {
 
     for _ in 0..20 {
         let k: i64 = rng.gen();
-        let _ = con.lpush("_simple_sort_1", k.to_string())?;
+        con.lpush("_simple_sort_1", k.to_string())?;
     }
 
     let ret: Vec<i64> = redis::cmd("SORT").arg("_simple_sort_1").query(&mut con)?;
